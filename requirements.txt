@@ -5,3 +5,4 @@ pycoingecko
 plotly
 matplotlib
 requests
+streamlit-autorefresh
