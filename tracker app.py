@@ -4,6 +4,15 @@ from pycoingecko import CoinGeckoAPI
 import plotly.express as px
 import requests
 import time
+from streamlit_lottie import st_lottie
+
+# Page config & theming
+st.set_page_config(
+    page_title="Crypto Tracker",
+    page_icon="🌍",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # Helper: Auto-refresh without external deps
 def auto_refresh(interval_seconds: int):
@@ -15,17 +24,29 @@ def auto_refresh(interval_seconds: int):
         st.session_state._last_refresh = now
         st.experimental_rerun()
 
-# Singleton API client using st.cache_resource
+# Load Lottie animation JSON from URL
+def load_lottie(url: str):
+    r = requests.get(url)
+    if r.status_code == 200:
+        return r.json()
+    return None
+
+# Lottie animation in header
+lottie_crypto = load_lottie("https://assets10.lottiefiles.com/packages/lf20_jhxuit3m.json")
+st_lottie(lottie_crypto, height=150, key="crypto_anim")
+
+# Singleton API client using cache_resource
 @st.cache_resource
 def get_client():
     return CoinGeckoAPI()
 
 cg = get_client()
 
-# Title
-st.title("🌍 Cryptocurrency Price Tracker")
+# Title with custom color
+st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🌍 Cryptocurrency Price Tracker</h1>", unsafe_allow_html=True)
 
 # Sidebar settings
+st.sidebar.header("⚙️ Settings")
 currency = st.sidebar.selectbox('Select Currency', ['usd', 'inr'], index=0)
 refresh_interval = st.sidebar.slider('Refresh Interval (seconds)', 10, 300, 60)
 
@@ -37,63 +58,78 @@ auto_refresh(refresh_interval)
 def load_data(vs_currency):
     data = cg.get_coins_markets(vs_currency=vs_currency, per_page=50)
     df = pd.DataFrame(data)
-    df['price_change_24h'] = df['price_change_percentage_24h']
-    return df
-
-st.subheader(f"Top 50 Cryptocurrencies (prices in {currency.upper()})")
+    df['Price Change (%)'] = df['price_change_percentage_24h']
+    df['Current Price'] = df['current_price']
+    df['Symbol'] = df['symbol'].str.upper()
+    df['Logo'] = df['image'].apply(lambda url: f"<img src='{url}' width='24' />")
+    return df[['Logo','Symbol','name','Current Price','market_cap','total_volume','Price Change (%)']]
 
 # Fetch and display
-with st.spinner('Loading data...'):
+with st.spinner('Loading crypto data...'):
     df = load_data(currency)
 
-st.dataframe(
-    df[['name', 'current_price', 'market_cap', 'total_volume', 'price_change_24h']]
-)
+st.markdown(f"### Top 50 Cryptocurrencies (Prices in <span style='color:#2196F3;'>{currency.upper()}</span>)", unsafe_allow_html=True)
+
+# Style price-change with color
+def color_positive(val): return 'color: green; font-weight:bold;' if val>0 else 'color: red; font-weight:bold;'
+
+styled = df.style.format({
+    'Current Price': '{:,.2f}',
+    'market_cap': '{:,.0f}',
+    'total_volume': '{:,.0f}',
+    'Price Change (%)': '{:+.2f}%'
+}).applymap(color_positive, subset=['Price Change (%)'])
+
+st.table(styled)
 
 # Watchlist
-st.sidebar.subheader('⭐ Your Watchlist')
-watchlist = st.sidebar.multiselect('Select coins to watch', options=df['id'])
+st.sidebar.header('⭐ Your Watchlist')
+watchlist = st.sidebar.multiselect('Select coins to watch', options=df['Symbol'], format_func=lambda s: s)
 
 if watchlist:
-    watch_df = df[df['id'].isin(watchlist)]
-    st.subheader('🔔 Watchlist Prices')
-    st.table(
-        watch_df[['name', 'current_price', 'price_change_24h']]
-    )
+    watch_df = df[df['Symbol'].isin([s.lower() for s in watchlist])]
+    st.markdown("<h3 style='color:#FF9800;'>🔔 Watchlist Prices</h3>", unsafe_allow_html=True)
+    st.table(watch_df.style.applymap(color_positive, subset=['Price Change (%)']))
 
-# Historical chart
-coin_to_plot = st.selectbox('Select Coin for Historical Chart', options=df['id'])
+# Historical chart with animation on load
+target = st.selectbox('Select Coin for Historical Chart', options=df['Symbol'], index=0)
 
-def get_history(coin_id, vs_currency, days=30):
+@st.cache_data(ttl=refresh_interval)
+def get_history(coin_symbol, vs_currency, days=30):
+    # find id by symbol
+    row = df[df['Symbol']==coin_symbol].iloc[0]
+    coin_id = row.name if 'id' in row else row['name'].lower().replace(' ','-')
     data = cg.get_coin_market_chart_by_id(id=coin_id, vs_currency=vs_currency, days=days)
     prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
     prices['date'] = pd.to_datetime(prices['timestamp'], unit='ms')
     return prices
 
-history = get_history(coin_to_plot, currency)
-
+history = get_history(target, currency)
 fig = px.line(
     history, x='date', y='price',
-    title=f'{coin_to_plot.upper()} - Last 30 Days',
-    labels={'price': f'Price ({currency.upper()})'}
+    title=f"{target} Last 30 Days",
+    labels={'price': f'Price ({currency.upper()})'},
+    animation_frame=None
 )
 st.plotly_chart(fig, use_container_width=True)
 
 # Price Alerts
-st.sidebar.subheader('🔔 Set Price Alerts')
-for coin in watchlist:
-    coin_data = df.loc[df['id'] == coin].squeeze()
+st.sidebar.header('🔔 Price Alerts')
+for sym in watchlist:
+    row = df[df['Symbol']==sym].iloc[0]
+    current = float(row['Current Price'])
     alert_price = st.sidebar.number_input(
-        f'{coin.upper()} alert (current: {coin_data.current_price:.2f})',
+        f'Alert for {sym}',
         min_value=0.0,
-        value=float(coin_data.current_price),
+        value=current,
         step=0.01
     )
-    if coin_data.current_price >= alert_price:
-        st.sidebar.warning(f'🚨 {coin.upper()} reached {coin_data.current_price:.2f} {currency.upper()}')
+    if current >= alert_price:
+        st.balloons()
+        st.markdown(f"<p style='color:red; font-size:1.2em;'>🚨 {sym} has reached {current:.2f} {currency.upper()}!</p>", unsafe_allow_html=True)
 
-# News section
-st.header("📰 Latest Crypto News")
+# News section with alternating card colors
+st.markdown("<hr><h2 style='text-align:center; color:#9C27B0;'>📰 Latest Crypto News</h2>", unsafe_allow_html=True)
 
 @st.cache_data(ttl=300)
 def fetch_crypto_news(api_key, page_size=5):
@@ -102,17 +138,19 @@ def fetch_crypto_news(api_key, page_size=5):
         f'?q=cryptocurrency&language=en&pageSize={page_size}&apiKey={api_key}'
     )
     resp = requests.get(url)
-    if resp.ok:
-        return resp.json().get('articles', [])
-    st.error("Failed to fetch news.")
-    return []
+    return resp.json().get('articles', []) if resp.ok else []
 
-news_api_key = st.secrets.get('NEWSAPI_KEY', None)
-if news_api_key:
-    articles = fetch_crypto_news(news_api_key)
-    for art in articles:
-        st.subheader(art['title'])
-        st.write(art.get('description', ''))
-        st.markdown(f"[Read more]({art['url']})")
+api_key = st.secrets.get('NEWSAPI_KEY')
+if api_key:
+    articles = fetch_crypto_news(api_key)
+    for i, art in enumerate(articles):
+        color = '#F3E5F5' if i%2==0 else '#E1BEE7'
+        st.markdown(
+            f"<div style='background-color:{color}; padding:10px; border-radius:8px;'>"
+            f"<h4>{art['title']}</h4><p>{art.get('description','')}</p>"
+            f"<a href='{art['url']}' target='_blank'>Read more</a></div><br>",
+            unsafe_allow_html=True
+        )
 else:
     st.info('Add your NEWSAPI_KEY in Streamlit secrets to enable news.')
+
