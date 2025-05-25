@@ -2,13 +2,11 @@ import streamlit as st
 import pandas as pd
 from pycoingecko import CoinGeckoAPI
 import plotly.express as px
-import requests  # Corrected import
-from streamlit_autorefresh import st_autorefresh
+import requests
 import time
 
-
+# Helper: Auto-refresh without external deps
 def auto_refresh(interval_seconds: int):
-    """Automatically rerun the app every interval_seconds."""
     now = time.time()
     last = st.session_state.get("_last_refresh", None)
     if last is None:
@@ -16,9 +14,6 @@ def auto_refresh(interval_seconds: int):
     elif now - last > interval_seconds:
         st.session_state._last_refresh = now
         st.experimental_rerun()
-
-# --- in your main code, after you read refresh_interval from the sidebar ---
-auto_refresh(refresh_interval)
 
 # Singleton API client
 @st.experimental_singleton
@@ -34,8 +29,8 @@ st.title("🌍 Cryptocurrency Price Tracker")
 currency = st.sidebar.selectbox('Select Currency', ['usd', 'inr'], index=0)
 refresh_interval = st.sidebar.slider('Refresh Interval (seconds)', 10, 300, 60)
 
-# Auto-refresh the app
-st_autorefresh(interval=refresh_interval * 1000, limit=None, key="crypto_autorefresh")
+# Invoke auto-refresh
+auto_refresh(refresh_interval)
 
 # Load data with memoization based on currency
 @st.experimental_memo(ttl=refresh_interval)
