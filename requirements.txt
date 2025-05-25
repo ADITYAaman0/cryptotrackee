@@ -4,4 +4,4 @@ requests
 pycoingecko
 plotly
 matplotlib
-
+request
