@@ -24,10 +24,13 @@ st.set_page_config(
 # ========================
 def load_lottie(url: str):
     """Load Lottie animation with enhanced error handling"""
-    r = requests.get(url)
-    if r.status_code != 200:
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
         return None
-    return r.json()
 
 # Custom CSS for modern card-like layout and styling
 st.markdown("""
@@ -96,7 +99,7 @@ def get_all_supported_currencies():
         return sorted(['usd', 'eur', 'jpy', 'gbp', 'btc', 'eth'])
 
 # ========================
-# HELPER FOR SPARKLINE
+# HELPER FOR SPARKLINE (WITH ERROR HANDLING)
 # ========================
 def create_sparkline(data):
     """Creates a base64 encoded sparkline image from a list of prices."""
@@ -120,12 +123,15 @@ def create_sparkline(data):
         height=50
     )
     
-    # Save image to a bytes buffer
-    buf = BytesIO()
-    fig.write_image(buf, format="png")
-    # Encode buffer to base64
-    img_str = base64.b64encode(buf.getvalue()).decode()
-    return f"data:image/png;base64,{img_str}"
+    # FIX: Add try-except block to handle missing kaleido package gracefully
+    try:
+        buf = BytesIO()
+        fig.write_image(buf, format="png", engine="kaleido")
+        img_str = base64.b64encode(buf.getvalue()).decode()
+        return f"data:image/png;base64,{img_str}"
+    except Exception:
+        # If image generation fails, return an empty string
+        return ""
 
 # ========================
 # SIDEBAR CONTROLS
@@ -154,11 +160,10 @@ def load_market_data(vs_currency: str):
             vs_currency=vs_currency,
             per_page=50,
             order='market_cap_desc',
-            sparkline=True  # Request sparkline data
+            sparkline=True
         )
         df = pd.DataFrame(data)
         
-        # Data processing and feature engineering
         df['Symbol'] = df['symbol'].str.upper()
         df['Price Change (%)'] = df['price_change_percentage_24h'].fillna(0)
         df['Logo'] = df['image'].apply(lambda x: f"<img src='{x}' width='30'>")
@@ -173,7 +178,7 @@ def load_market_data(vs_currency: str):
 df = load_market_data(currency)
 
 # ========================
-# MAIN DISPLAY: KPI METRICS
+# MAIN DISPLAY: KPI METRICS & DATA TABLE
 # ========================
 if not df.empty:
     st.subheader("📊 Key Metrics")
@@ -183,63 +188,18 @@ if not df.empty:
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric(
-            label=f"{btc_data['name']} ({btc_data['Symbol']})",
-            value=f"{btc_data['current_price']:,} {currency.upper()}",
-            delta=f"{btc_data['Price Change (%)']:.2f}%"
-        )
+        st.metric(label=f"{btc_data['name']} ({btc_data['Symbol']})", value=f"{btc_data['current_price']:,} {currency.upper()}", delta=f"{btc_data['Price Change (%)']:.2f}%")
     with col2:
-        st.metric(
-            label=f"{eth_data['name']} ({eth_data['Symbol']})",
-            value=f"{eth_data['current_price']:,} {currency.upper()}",
-            delta=f"{eth_data['Price Change (%)']:.2f}%"
-        )
+        st.metric(label=f"{eth_data['name']} ({eth_data['Symbol']})", value=f"{eth_data['current_price']:,} {currency.upper()}", delta=f"{eth_data['Price Change (%)']:.2f}%")
     with col3:
-        st.metric(
-            label=f"Top Gainer: {top_gainer['name']} ({top_gainer['Symbol']})",
-            value=f"{top_gainer['current_price']:,} {currency.upper()}",
-            delta=f"{top_gainer['Price Change (%)']:.2f}%"
-        )
+        st.metric(label=f"Top Gainer: {top_gainer['name']} ({top_gainer['Symbol']})", value=f"{top_gainer['current_price']:,} {currency.upper()}", delta=f"{top_gainer['Price Change (%)']:.2f}%")
     st.markdown("---")
 
-# ========================
-# MAIN DISPLAY: DATA TABLE
-# ========================
-if not df.empty:
     st.subheader("Market Overview")
-    
-    # Prepare dataframe for display
-    display_df = df[[
-        'Logo', 'name', 'Symbol', 'current_price', 'Price Change (%)', 'Trend Icon', 'market_cap', 'total_volume', '7d Sparkline'
-    ]].rename(columns={
-        'name': 'Name',
-        'current_price': 'Current Price',
-        'market_cap': 'Market Cap',
-        'total_volume': '24h Volume'
-    })
-
-    # Render dataframe as HTML to allow custom images/styles
-    st.markdown(
-        display_df.to_html(
-            escape=False,
-            formatters={
-                'Current Price': lambda x: f"<b>{x:,.4f} {currency.upper()}</b>",
-                'Price Change (%)': lambda x: f'<b style="color: {"#4CAF50" if x >= 0 else "#F44336"};">{x:+.2f}%</b>',
-                'Market Cap': lambda x: f"${x:,.0f}",
-                '24h Volume': lambda x: f"${x:,.0f}",
-                '7d Sparkline': lambda x: f"<img src='{x}'>",
-            },
-            index=False
-        ),
-        unsafe_allow_html=True
-    )
+    display_df = df[['Logo', 'name', 'Symbol', 'current_price', 'Price Change (%)', 'Trend Icon', 'market_cap', 'total_volume', '7d Sparkline']].rename(columns={'name': 'Name', 'current_price': 'Current Price', 'market_cap': 'Market Cap', 'total_volume': '24h Volume'})
+    st.markdown(display_df.to_html(escape=False, formatters={'Current Price': lambda x: f"<b>{x:,.4f} {currency.upper()}</b>", 'Price Change (%)': lambda x: f'<b style="color: {"#4CAF50" if x >= 0 else "#F44336"};">{x:+.2f}%</b>', 'Market Cap': lambda x: f"${x:,.0f}", '24h Volume': lambda x: f"${x:,.0f}", '7d Sparkline': lambda x: f"<img src='{x}'>"}, index=False), unsafe_allow_html=True)
     st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
 
-
-# ========================
-# HISTORICAL PRICE CHART
-# ========================
-if not df.empty:
     st.markdown("---")
     st.subheader("📈 Historical Price Chart")
     selected_coin = st.selectbox('Select Cryptocurrency', options=df['name'].unique(), index=0)
@@ -257,35 +217,29 @@ if not df.empty:
     coin_id = df[df['name'] == selected_coin].iloc[0]['id']
     historical_data = get_historical_data(coin_id, currency)
     if not historical_data.empty:
-        fig = px.area(
-            historical_data, x='date', y='price', title=f"{selected_coin} Price History",
-            labels={'price': f'Price ({currency.upper()})', 'date': 'Date'},
-            color_discrete_sequence=['#4CAF50']
-        )
+        fig = px.area(historical_data, x='date', y='price', title=f"{selected_coin} Price History", labels={'price': f'Price ({currency.upper()})', 'date': 'Date'}, color_discrete_sequence=['#4CAF50'])
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning("Could not load market data. Please check your connection or try again later.")
 
 # ========================
-# PRICE ALERTS (WITH ANIMATION)
+# PRICE ALERTS (WITH KEYERROR FIX)
 # ========================
 with st.sidebar:
     st.header("🔔 Price Alerts")
-    watchlist = st.multiselect('Select coins to monitor', options=df['name'].unique())
-
-    for coin_name in watchlist:
-        coin_data = df[df['name'] == coin_name].iloc[0]
-        current_price = coin_data['current_price']
-        
-        alert_price = st.number_input(
-            f"Alert for {coin_name} ({currency.upper()})",
-            min_value=0.0, value=float(current_price * 1.05), step=0.01,
-            key=f"alert_{coin_name}",
-            help=f"Set a price target. Current price: {current_price:,.4f}"
-        )
-        
-        if current_price >= alert_price and alert_price > 0:
-            st.success(f"🚨 {coin_name} reached your target of {alert_price:,.2f}!")
-            st.balloons() # ANIMATION TRIGGER
+    # FIX: Only show the watchlist if the dataframe is not empty
+    if not df.empty:
+        watchlist = st.multiselect('Select coins to monitor', options=df['name'].unique())
+        for coin_name in watchlist:
+            coin_data = df[df['name'] == coin_name].iloc[0]
+            current_price = coin_data['current_price']
+            alert_price = st.number_input(f"Alert for {coin_name} ({currency.upper()})", min_value=0.0, value=float(current_price * 1.05), step=0.01, key=f"alert_{coin_name}", help=f"Set a price target. Current price: {current_price:,.4f}")
+            if current_price >= alert_price and alert_price > 0:
+                st.success(f"🚨 {coin_name} reached your target of {alert_price:,.2f}!")
+                st.balloons()
+    else:
+        st.info("Data not available for setting alerts.")
 
 # ========================
 # AUTO-REFRESH LOGIC
