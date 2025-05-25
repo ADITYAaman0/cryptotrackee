@@ -133,7 +133,7 @@ st.markdown(styled_df.to_html(escape=False), unsafe_allow_html=True)
 st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
 
 # ========================
-# HISTORICAL PRICE CHART (FIXED)
+# HISTORICAL PRICE CHART
 # ========================
 st.subheader("Historical Price Chart")
 selected_coin = st.selectbox('Select Cryptocurrency', options=df['Symbol'], index=0)
@@ -142,7 +142,7 @@ selected_coin = st.selectbox('Select Cryptocurrency', options=df['Symbol'], inde
 def get_historical_data(symbol: str, vs_currency: str, days: int = 30):
     try:
         coin_data = df[df['Symbol'] == symbol].iloc[0]
-        coin_id = coin_data['id']  # Use actual coin ID from DataFrame
+        coin_id = coin_data['id']
         
         data = cg.get_coin_market_chart_by_id(
             id=coin_id,
@@ -204,7 +204,7 @@ for symbol in watchlist:
         st.error(f"Alert error for {symbol}: {str(e)}")
 
 # ========================
-# AUTO-REFRESH (FIXED)
+# AUTO-REFRESH (UPDATED)
 # ========================
 def manage_auto_refresh(interval: int):
     current_time = time.time()
@@ -213,7 +213,7 @@ def manage_auto_refresh(interval: int):
     if current_time - last_refresh > interval:
         try:
             st.session_state.last_refresh = current_time
-            st.experimental_rerun()
+            st.rerun()  # Updated to current Streamlit API
         except Exception as e:
             st.error(f"Refresh error: {str(e)}")
 
