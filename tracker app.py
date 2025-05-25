@@ -4,6 +4,21 @@ from pycoingecko import CoinGeckoAPI
 import plotly.express as px
 import requests  # Corrected import
 from streamlit_autorefresh import st_autorefresh
+import time
+
+
+def auto_refresh(interval_seconds: int):
+    """Automatically rerun the app every interval_seconds."""
+    now = time.time()
+    last = st.session_state.get("_last_refresh", None)
+    if last is None:
+        st.session_state._last_refresh = now
+    elif now - last > interval_seconds:
+        st.session_state._last_refresh = now
+        st.experimental_rerun()
+
+# --- in your main code, after you read refresh_interval from the sidebar ---
+auto_refresh(refresh_interval)
 
 # Singleton API client
 @st.experimental_singleton
