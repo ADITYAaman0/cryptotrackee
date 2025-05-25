@@ -24,16 +24,27 @@ def auto_refresh(interval_seconds: int):
         st.session_state._last_refresh = now
         st.experimental_rerun()
 
-# Load Lottie animation JSON from URL
+# Load Lottie animation JSON from URL with error handling
 def load_lottie(url: str):
-    r = requests.get(url)
-    if r.status_code == 200:
-        return r.json()
-    return None
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+        st.error(f"Failed to load animation: HTTP {r.status_code}")
+        return None
+    except Exception as e:
+        st.error(f"Error loading animation: {str(e)}")
+        return None
 
-# Lottie animation in header
+# Lottie animation in header with fallback
 lottie_crypto = load_lottie("https://assets10.lottiefiles.com/packages/lf20_jhxuit3m.json")
-st_lottie(lottie_crypto, height=150, key="crypto_anim")
+if lottie_crypto:
+    st_lottie(lottie_crypto, height=150, key="crypto_anim")
+    st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🌍 Cryptocurrency Price Tracker</h1>", 
+                unsafe_allow_html=True)
+else:
+    st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🌍 Cryptocurrency Price Tracker</h1>", 
+                unsafe_allow_html=True)
 
 # Singleton API client using cache_resource
 @st.cache_resource
@@ -41,9 +52,6 @@ def get_client():
     return CoinGeckoAPI()
 
 cg = get_client()
-
-# Title with custom color
-st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🌍 Cryptocurrency Price Tracker</h1>", unsafe_allow_html=True)
 
 # Sidebar settings
 st.sidebar.header("⚙️ Settings")
@@ -68,7 +76,8 @@ def load_data(vs_currency):
 with st.spinner('Loading crypto data...'):
     df = load_data(currency)
 
-st.markdown(f"### Top 50 Cryptocurrencies (Prices in <span style='color:#2196F3;'>{currency.upper()}</span>)", unsafe_allow_html=True)
+st.markdown(f"### Top 50 Cryptocurrencies (Prices in <span style='color:#2196F3;'>{currency.upper()}</span>)", 
+            unsafe_allow_html=True)
 
 # Style price-change with color
 def color_positive(val): return 'color: green; font-weight:bold;' if val>0 else 'color: red; font-weight:bold;'
@@ -126,10 +135,12 @@ for sym in watchlist:
     )
     if current >= alert_price:
         st.balloons()
-        st.markdown(f"<p style='color:red; font-size:1.2em;'>🚨 {sym} has reached {current:.2f} {currency.upper()}!</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:red; font-size:1.2em;'>🚨 {sym} has reached {current:.2f} {currency.upper()}!</p>", 
+                    unsafe_allow_html=True)
 
 # News section with alternating card colors
-st.markdown("<hr><h2 style='text-align:center; color:#9C27B0;'>📰 Latest Crypto News</h2>", unsafe_allow_html=True)
+st.markdown("<hr><h2 style='text-align:center; color:#9C27B0;'>📰 Latest Crypto News</h2>", 
+            unsafe_allow_html=True)
 
 @st.cache_data(ttl=300)
 def fetch_crypto_news(api_key, page_size=5):
@@ -153,4 +164,3 @@ if api_key:
         )
 else:
     st.info('Add your NEWSAPI_KEY in Streamlit secrets to enable news.')
-
