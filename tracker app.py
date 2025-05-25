@@ -15,8 +15,8 @@ def auto_refresh(interval_seconds: int):
         st.session_state._last_refresh = now
         st.experimental_rerun()
 
-# Singleton API client
-@st.experimental_singleton
+# Singleton API client using st.cache_resource
+@st.cache_resource
 def get_client():
     return CoinGeckoAPI()
 
@@ -32,8 +32,8 @@ refresh_interval = st.sidebar.slider('Refresh Interval (seconds)', 10, 300, 60)
 # Invoke auto-refresh
 auto_refresh(refresh_interval)
 
-# Load data with memoization based on currency
-@st.experimental_memo(ttl=refresh_interval)
+# Load data with caching based on currency
+@st.cache_data(ttl=refresh_interval)
 def load_data(vs_currency):
     data = cg.get_coins_markets(vs_currency=vs_currency, per_page=50)
     df = pd.DataFrame(data)
@@ -95,7 +95,7 @@ for coin in watchlist:
 # News section
 st.header("📰 Latest Crypto News")
 
-@st.experimental_memo(ttl=300)
+@st.cache_data(ttl=300)
 def fetch_crypto_news(api_key, page_size=5):
     url = (
         'https://newsapi.org/v2/everything'
