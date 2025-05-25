@@ -49,10 +49,40 @@ def get_coingecko_client():
 cg = get_coingecko_client()
 
 # ========================
-# SIDEBAR CONTROLS
+# NEW: FUNCTION TO GET ALL SUPPORTED CURRENCIES
+# ========================
+@st.cache_data(ttl=86400)  # Cache the list for 24 hours for efficiency
+def get_all_supported_currencies():
+    """Fetches all supported vs_currencies from the CoinGecko API."""
+    try:
+        currencies = cg.get_supported_vs_currencies()
+        currencies.sort() # Sort the list alphabetically for better UX
+        return currencies
+    except Exception as e:
+        st.error(f"Failed to fetch currency list from API. Using a default list. Error: {e}")
+        # Return a fallback list if the API call fails
+        return ['usd', 'eur', 'jpy', 'gbp', 'btc', 'eth']
+
+# ========================
+# SIDEBAR CONTROLS (UPDATED)
 # ========================
 st.sidebar.header("⚙️ Settings")
-currency = st.sidebar.selectbox('Select Currency', ['usd', 'eur', 'gbp', 'jpy'], index=0)
+
+# Dynamically populate the selectbox with all supported currencies
+supported_currencies = get_all_supported_currencies()
+try:
+    # Set 'usd' as the default currency if it exists
+    default_currency_index = supported_currencies.index('usd')
+except ValueError:
+    # Fallback to the first item if 'usd' isn't in the list
+    default_currency_index = 0
+
+currency = st.sidebar.selectbox(
+    'Select Currency',
+    options=supported_currencies,
+    index=default_currency_index,
+    help="Select the currency to display prices in."
+)
 refresh_interval = st.sidebar.slider('Refresh Interval (seconds)', 10, 300, 60)
 
 # ========================
@@ -72,14 +102,11 @@ def load_market_data(vs_currency: str):
             per_page=50,
             order='market_cap_desc'
         )
-        
         df = pd.DataFrame(data)
-        
         required_columns = [
             'id', 'symbol', 'name', 'current_price', 'market_cap',
             'total_volume', 'price_change_percentage_24h', 'image'
         ]
-        
         for col in required_columns:
             if col not in df.columns:
                 raise ValueError(f"Missing column: {col}")
@@ -92,13 +119,7 @@ def load_market_data(vs_currency: str):
         df['Logo'] = df['image'].apply(
             lambda x: f"<img src='{x}' width='24' style='image-rendering: crisp-edges;'>" if x else ""
         )
-
-        return df[[
-            'Logo', 'Symbol', 'name', 'id',
-            'Current Price', 'Market Cap',
-            '24h Volume', 'Price Change (%)'
-        ]]
-
+        return df[['Logo', 'Symbol', 'name', 'id', 'Current Price', 'Market Cap', '24h Volume', 'Price Change (%)']]
     except Exception as e:
         st.error(f"Data loading failed: {str(e)}")
         st.stop()
@@ -106,22 +127,18 @@ def load_market_data(vs_currency: str):
 # ========================
 # MAIN DISPLAY
 # ========================
-# Initialize a placeholder for the dataframe
 data_container = st.container()
-
 with st.spinner('Loading market data...'):
     df = load_market_data(currency)
 
-# Format numeric columns
 format_rules = {
-    'Current Price': lambda x: f"{x:,.2f} {currency.upper()}",
+    'Current Price': lambda x: f"{x:,.4f} {currency.upper()}", # Increased precision for crypto-based currencies
     'Market Cap': lambda x: f"{x:,.0f} {currency.upper()}",
     '24h Volume': lambda x: f"{x:,.0f} {currency.upper()}",
     'Price Change (%)': lambda x: f"{x:+.2f}%"
 }
 
 def price_change_style(val):
-    # This function now receives a pre-formatted string, e.g., "+5.25%"
     try:
         value = float(val.strip('%'))
         color = '#4CAF50' if value >= 0 else '#F44336'
@@ -129,17 +146,14 @@ def price_change_style(val):
     except:
         return ''
 
-# Hide the index and render HTML for logos and styling
 styled_df = df.style.format(format_rules)\
                   .apply(lambda s: s.apply(price_change_style), subset=['Price Change (%)'])\
                   .set_properties(**{'text-align': 'left'})\
-                  .hide(axis="index") # Use hide() instead of hide_index() for newer pandas
+                  .hide(axis="index")
 
-# Display the styled dataframe in the container
 with data_container:
     st.markdown(styled_df.to_html(escape=False), unsafe_allow_html=True)
     st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
-
 
 # ========================
 # HISTORICAL PRICE CHART
@@ -150,22 +164,13 @@ selected_coin = st.selectbox('Select Cryptocurrency', options=df['Symbol'].uniqu
 @st.cache_data(ttl=3600)
 def get_historical_data(symbol: str, vs_currency: str, days: int = 30):
     try:
-        # Get the id for the selected symbol from the main dataframe
         coin_id = df.loc[df['Symbol'] == symbol, 'id'].iloc[0]
-        
-        data = cg.get_coin_market_chart_by_id(
-            id=coin_id,
-            vs_currency=vs_currency,
-            days=days
-        )
-        
+        data = cg.get_coin_market_chart_by_id(id=coin_id, vs_currency=vs_currency, days=days)
         if 'prices' not in data or not data['prices']:
             return pd.DataFrame()
-
         historical_df = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
         historical_df['date'] = pd.to_datetime(historical_df['timestamp'], unit='ms')
         return historical_df[['date', 'price']]
-    
     except Exception as e:
         st.error(f"Failed to load historical data for {symbol}: {str(e)}")
         return pd.DataFrame()
@@ -173,10 +178,7 @@ def get_historical_data(symbol: str, vs_currency: str, days: int = 30):
 historical_data = get_historical_data(selected_coin, currency)
 if not historical_data.empty:
     fig = px.line(
-        historical_data,
-        x='date',
-        y='price',
-        title=f"{selected_coin} Price History ({currency.upper()})",
+        historical_data, x='date', y='price', title=f"{selected_coin} Price History ({currency.upper()})",
         labels={'price': 'Price', 'date': 'Date'}
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -188,34 +190,24 @@ else:
 # ========================
 st.sidebar.header("🔔 Price Alerts")
 watchlist = st.sidebar.multiselect(
-    'Select coins to monitor',
-    options=df['Symbol'].unique(),
-    format_func=lambda x: x
+    'Select coins to monitor', options=df['Symbol'].unique(), format_func=lambda x: x
 )
-
 for symbol in watchlist:
     try:
         coin_data = df[df['Symbol'] == symbol].iloc[0]
         current_price = coin_data['Current Price']
-        
         alert_price = st.sidebar.number_input(
             f"Alert price for {symbol} ({currency.upper()})",
-            min_value=0.0,
-            value=float(current_price), # Ensure value is float
-            step=0.01,
-            key=f"alert_{symbol}"
+            min_value=0.0, value=float(current_price), step=0.01, key=f"alert_{symbol}"
         )
-        
         if current_price >= alert_price and alert_price > 0:
             st.sidebar.success(f"🚨 {symbol} is above your alert price of {alert_price:.2f} {currency.upper()}!")
-            
     except Exception as e:
         st.sidebar.error(f"Alert error for {symbol}: {str(e)}")
 
 # ========================
 # AUTO-REFRESH (FIXED)
 # ========================
-# Using st.session_state to manage the last refresh time
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = 0
 
@@ -223,9 +215,7 @@ def manage_auto_refresh(interval: int):
     current_time = time.time()
     if current_time - st.session_state.last_refresh > interval:
         st.session_state.last_refresh = current_time
-        st.rerun() # Use the current st.rerun() function
+        st.rerun()
 
 manage_auto_refresh(refresh_interval)
-
-# Add a small sleep to prevent high CPU usage from the refresh loop
 time.sleep(1)
