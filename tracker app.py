@@ -3,7 +3,7 @@ import pandas as pd
 from pycoingecko import CoinGeckoAPI
 import plotly.express as px
 import time
-
+import request
 cg = CoinGeckoAPI()
 
 # Title
@@ -62,8 +62,28 @@ for coin in watchlist:
         st.warning(f'🚨 Alert! {coin.upper()} has reached {coin_data["current_price"]} {currency.upper()}')
 
 # News section (optional)
-st.subheader('📰 Latest Crypto News (Coming Soon)')
-st.info('Integrate with News API (like NewsAPI.org) to show headlines.')
+
+
+def fetch_crypto_news():
+    api_key = 'YOUR_NEWSAPI_KEY'
+    url = f'https://newsapi.org/v2/everything?q=cryptocurrency&apiKey={api_key}&language=en&pageSize=5'
+    response = requests.get(url)
+    if response.status_code == 200:
+        articles = response.json().get('articles')
+        return articles
+    else:
+        st.error("Failed to fetch news.")
+        return []
+
+st.header("📰 Latest Crypto News")
+
+news_articles = fetch_crypto_news()
+
+for article in news_articles:
+    st.subheader(article['title'])
+    st.write(article['description'])
+    st.markdown(f"[Read more]({article['url']})")
+
 
 # Auto-refresh
 st.sidebar.write('⏳ Auto-refreshing...')
