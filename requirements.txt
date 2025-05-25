@@ -6,3 +6,4 @@ plotly
 matplotlib
 requests
 streamlit-autorefresh
+streamlit-lottie
