@@ -36,7 +36,7 @@ lottie_animation = load_lottie("https://lottie.host/dc3d72d2-4118-4ddf-b945-0d66
 with st.container():
     if lottie_animation:
         st_lottie(lottie_animation, height=150, key="header_anim")
-    st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🌍 Cryptocurrency Price Tracker</h1>", 
+    st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🌍 Cryptocurrency Price Tracker</h1>",
                 unsafe_allow_html=True)
 
 # ========================
@@ -106,6 +106,9 @@ def load_market_data(vs_currency: str):
 # ========================
 # MAIN DISPLAY
 # ========================
+# Initialize a placeholder for the dataframe
+data_container = st.container()
+
 with st.spinner('Loading market data...'):
     df = load_market_data(currency)
 
@@ -118,6 +121,7 @@ format_rules = {
 }
 
 def price_change_style(val):
+    # This function now receives a pre-formatted string, e.g., "+5.25%"
     try:
         value = float(val.strip('%'))
         color = '#4CAF50' if value >= 0 else '#F44336'
@@ -125,24 +129,29 @@ def price_change_style(val):
     except:
         return ''
 
+# Hide the index and render HTML for logos and styling
 styled_df = df.style.format(format_rules)\
-                   .applymap(price_change_style, subset=['Price Change (%)'])\
-                   .set_properties(**{'text-align': 'left'})
+                  .apply(lambda s: s.apply(price_change_style), subset=['Price Change (%)'])\
+                  .set_properties(**{'text-align': 'left'})\
+                  .hide(axis="index") # Use hide() instead of hide_index() for newer pandas
 
-st.markdown(styled_df.to_html(escape=False), unsafe_allow_html=True)
-st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+# Display the styled dataframe in the container
+with data_container:
+    st.markdown(styled_df.to_html(escape=False), unsafe_allow_html=True)
+    st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+
 
 # ========================
 # HISTORICAL PRICE CHART
 # ========================
 st.subheader("Historical Price Chart")
-selected_coin = st.selectbox('Select Cryptocurrency', options=df['Symbol'], index=0)
+selected_coin = st.selectbox('Select Cryptocurrency', options=df['Symbol'].unique(), index=0)
 
 @st.cache_data(ttl=3600)
 def get_historical_data(symbol: str, vs_currency: str, days: int = 30):
     try:
-        coin_data = df[df['Symbol'] == symbol].iloc[0]
-        coin_id = coin_data['id']
+        # Get the id for the selected symbol from the main dataframe
+        coin_id = df.loc[df['Symbol'] == symbol, 'id'].iloc[0]
         
         data = cg.get_coin_market_chart_by_id(
             id=coin_id,
@@ -150,7 +159,7 @@ def get_historical_data(symbol: str, vs_currency: str, days: int = 30):
             days=days
         )
         
-        if 'prices' not in data or len(data['prices']) == 0:
+        if 'prices' not in data or not data['prices']:
             return pd.DataFrame()
 
         historical_df = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
@@ -192,29 +201,31 @@ for symbol in watchlist:
         alert_price = st.sidebar.number_input(
             f"Alert price for {symbol} ({currency.upper()})",
             min_value=0.0,
-            value=current_price,
+            value=float(current_price), # Ensure value is float
             step=0.01,
             key=f"alert_{symbol}"
         )
         
-        if current_price >= alert_price:
-            st.success(f"🚨 {symbol} alert triggered at {current_price:.2f} {currency.upper()}!")
+        if current_price >= alert_price and alert_price > 0:
+            st.sidebar.success(f"🚨 {symbol} is above your alert price of {alert_price:.2f} {currency.upper()}!")
             
     except Exception as e:
-        st.error(f"Alert error for {symbol}: {str(e)}")
+        st.sidebar.error(f"Alert error for {symbol}: {str(e)}")
 
 # ========================
-# AUTO-REFRESH (UPDATED)
+# AUTO-REFRESH (FIXED)
 # ========================
+# Using st.session_state to manage the last refresh time
+if "last_refresh" not in st.session_state:
+    st.session_state.last_refresh = 0
+
 def manage_auto_refresh(interval: int):
     current_time = time.time()
-    last_refresh = st.session_state.get("last_refresh", 0)
-    
-    if current_time - last_refresh > interval:
-        try:
-            st.session_state.last_refresh = current_time
-            st.rerun()  # Updated to current Streamlit API
-        except Exception as e:
-            st.error(f"Refresh error: {str(e)}")
+    if current_time - st.session_state.last_refresh > interval:
+        st.session_state.last_refresh = current_time
+        st.rerun() # Use the current st.rerun() function
 
 manage_auto_refresh(refresh_interval)
+
+# Add a small sleep to prevent high CPU usage from the refresh loop
+time.sleep(1)
