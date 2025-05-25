@@ -76,7 +76,7 @@ def load_market_data(vs_currency: str):
         df = pd.DataFrame(data)
         
         required_columns = [
-            'symbol', 'name', 'current_price', 'market_cap',
+            'id', 'symbol', 'name', 'current_price', 'market_cap',
             'total_volume', 'price_change_percentage_24h', 'image'
         ]
         
@@ -94,7 +94,7 @@ def load_market_data(vs_currency: str):
         )
 
         return df[[
-            'Logo', 'Symbol', 'name', 
+            'Logo', 'Symbol', 'name', 'id',
             'Current Price', 'Market Cap',
             '24h Volume', 'Price Change (%)'
         ]]
@@ -133,7 +133,7 @@ st.markdown(styled_df.to_html(escape=False), unsafe_allow_html=True)
 st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
 
 # ========================
-# HISTORICAL PRICE CHART
+# HISTORICAL PRICE CHART (FIXED)
 # ========================
 st.subheader("Historical Price Chart")
 selected_coin = st.selectbox('Select Cryptocurrency', options=df['Symbol'], index=0)
@@ -142,16 +142,23 @@ selected_coin = st.selectbox('Select Cryptocurrency', options=df['Symbol'], inde
 def get_historical_data(symbol: str, vs_currency: str, days: int = 30):
     try:
         coin_data = df[df['Symbol'] == symbol].iloc[0]
+        coin_id = coin_data['id']  # Use actual coin ID from DataFrame
+        
         data = cg.get_coin_market_chart_by_id(
-            id=coin_data.name,
+            id=coin_id,
             vs_currency=vs_currency,
             days=days
         )
+        
+        if 'prices' not in data or len(data['prices']) == 0:
+            return pd.DataFrame()
+
         historical_df = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
         historical_df['date'] = pd.to_datetime(historical_df['timestamp'], unit='ms')
         return historical_df[['date', 'price']]
+    
     except Exception as e:
-        st.error(f"Historical data error: {str(e)}")
+        st.error(f"Failed to load historical data for {symbol}: {str(e)}")
         return pd.DataFrame()
 
 historical_data = get_historical_data(selected_coin, currency)
@@ -164,9 +171,11 @@ if not historical_data.empty:
         labels={'price': 'Price', 'date': 'Date'}
     )
     st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning(f"No historical data available for {selected_coin}")
 
 # ========================
-# PRICE ALERTS (FIXED)
+# PRICE ALERTS
 # ========================
 st.sidebar.header("🔔 Price Alerts")
 watchlist = st.sidebar.multiselect(
@@ -195,14 +204,17 @@ for symbol in watchlist:
         st.error(f"Alert error for {symbol}: {str(e)}")
 
 # ========================
-# AUTO-REFRESH LOGIC
+# AUTO-REFRESH (FIXED)
 # ========================
 def manage_auto_refresh(interval: int):
     current_time = time.time()
     last_refresh = st.session_state.get("last_refresh", 0)
     
     if current_time - last_refresh > interval:
-        st.session_state.last_refresh = current_time
-        st.experimental_rerun()
+        try:
+            st.session_state.last_refresh = current_time
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Refresh error: {str(e)}")
 
 manage_auto_refresh(refresh_interval)
