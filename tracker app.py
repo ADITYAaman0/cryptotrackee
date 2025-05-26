@@ -63,6 +63,22 @@ st.markdown("""
         box-shadow: none !important;
         color: #4CAF50;
     }
+    .mover-header {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #FFFFFF;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #4CAF50;
+    }
+    .mover-row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+    .mover-name {
+        font-weight: bold;
+        margin-left: 10px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -88,13 +104,14 @@ cg = get_coingecko_client()
 
 @st.cache_data(ttl=60)
 def load_market_data(vs_currency: str):
-    """Loads market data for top 50 coins and caches it."""
+    """Loads market data for top 250 coins and caches it."""
     try:
         data = cg.get_coins_markets(
             vs_currency=vs_currency,
-            per_page=50,
             order='market_cap_desc',
-            sparkline=True
+            per_page=250,  # Increased to get a wider market view for movers
+            sparkline=True,
+            price_change_percentage='7d'  # Explicitly request 7-day price change
         )
         df = pd.DataFrame(data)
         return df
@@ -118,8 +135,6 @@ def get_historical_data(coin_id: str, vs_currency: str, days: int = 30):
 # HELPER FOR SPARKLINE
 # ========================
 def create_sparkline(data):
-    """Creates a base64 encoded sparkline image."""
-    # Ensure you have kaleido installed: pip install kaleido
     if not data or len(data) < 2:
         return ""
     fig = go.Figure(go.Scatter(
@@ -165,6 +180,8 @@ df = load_market_data(currency)
 if not df.empty:
     df['Symbol'] = df['symbol'].str.upper()
     df['Price Change (%)'] = df['price_change_percentage_24h'].fillna(0)
+    # NEW: Process 7-day price change data
+    df['7d % Change'] = df['price_change_percentage_7d_in_currency'].fillna(0)
     df['Logo'] = df['image']
     df['Trend Icon'] = df['Price Change (%)'].apply(lambda x: "🔺" if x > 0 else "🔻" if x < 0 else "➖")
     df['7d Sparkline'] = df['sparkline_in_7d'].apply(lambda x: create_sparkline(x.get('price', [])))
@@ -177,7 +194,7 @@ def display_coin_details():
     selected_coin_data = df[df['id'] == st.session_state.selected_coin_id]
     
     if selected_coin_data.empty:
-        st.warning("Could not find the selected coin. It may have dropped out of the top 50. Returning to the main list.")
+        st.warning("Could not find the selected coin. It may have been delisted or is unavailable. Returning to the main list.")
         st.session_state.selected_coin_id = None
         st.rerun()
         return
@@ -201,33 +218,65 @@ def display_coin_details():
     st.subheader("Coin Information")
     col1, col2 = st.columns(2)
     col1.metric("Current Price", f"{coin['current_price']:,.4f} {currency.upper()}", f"{coin['price_change_percentage_24h']:.2f}%")
-    
-    # +++++++++ THE FIX IS HERE +++++++++
-    # This line was corrected to remove the invalid syntax.
     col2.metric("Market Cap", f"${coin['market_cap']:,}")
-    # +++++++++++++++++++++++++++++++++++
-    
     col1.metric("24h Volume", f"${coin['total_volume']:,}")
     col2.metric("Market Cap Rank", f"#{coin['market_cap_rank']}")
 
 
 # ========================
+# NEW VIEW COMPONENT: TOP MOVERS
+# ========================
+def display_market_movers(movers_df, title, icon):
+    """Creates a display list for top gainers or losers."""
+    st.markdown(f'<p class="mover-header">{icon} {title}</p>', unsafe_allow_html=True)
+    
+    for _, row in movers_df.iterrows():
+        change = row['7d % Change']
+        color = "#4CAF50" if change >= 0 else "#F44336"
+        
+        st.markdown(f"""
+            <div class="mover-row">
+                <img src="{row['Logo']}" width="30">
+                <span class="mover-name">{row['name']}</span>
+                <span style="flex-grow: 1; text-align: right; color: {color}; font-weight: bold;">
+                    {change:+.2f}%
+                </span>
+            </div>
+        """, unsafe_allow_html=True)
+
+# ========================
 # VIEW: MAIN MARKET OVERVIEW
 # ========================
 def display_market_overview():
-    """Renders the main table of all cryptocurrencies."""
+    """Renders the main dashboard view."""
+    # --- Key Metrics ---
     st.subheader("Key Metrics")
     col1, col2, col3 = st.columns(3)
     btc_data = df[df['Symbol'] == 'BTC'].iloc[0]
     eth_data = df[df['Symbol'] == 'ETH'].iloc[0]
-    top_gainer = df.loc[df['Price Change (%)'].idxmax()]
+    top_gainer_24h = df.loc[df['Price Change (%)'].idxmax()]
     
     col1.metric(f"{btc_data['name']} ({btc_data['Symbol']})", f"{btc_data['current_price']:,} {currency.upper()}", f"{btc_data['Price Change (%)']:.2f}%")
     col2.metric(f"{eth_data['name']} ({eth_data['Symbol']})", f"{eth_data['current_price']:,} {currency.upper()}", f"{eth_data['Price Change (%)']:.2f}%")
-    col3.metric(f"Top Gainer: {top_gainer['name']}", f"{top_gainer['current_price']:,} {currency.upper()}", f"{top_gainer['Price Change (%)']:.2f}%")
+    col3.metric(f"Top 24h Gainer: {top_gainer_24h['name']}", f"{top_gainer_24h['current_price']:,} {currency.upper()}", f"{top_gainer_24h['Price Change (%)']:.2f}%")
     st.markdown("---")
 
+    # --- NEW: Weekly Top Movers Section ---
+    st.subheader("Weekly Market Movers")
+    top_gainers = df.sort_values(by='7d % Change', ascending=False).head(10)
+    top_losers = df.sort_values(by='7d % Change', ascending=True).head(10)
+    
+    gainer_col, loser_col = st.columns(2)
+    with gainer_col:
+        display_market_movers(top_gainers, "Top Gainers (7d)", "🚀")
+    with loser_col:
+        display_market_movers(top_losers, "Top Losers (7d)", "📉")
+    st.markdown("---")
+
+
+    # --- Main Market Table ---
     st.subheader("Market Overview")
+    display_df = df.head(50) # Display only top 50 by market cap in the main table
     
     header_cols = st.columns([0.5, 2, 1, 2, 1.5, 2.5])
     header_cols[0].write("**#**")
@@ -237,7 +286,7 @@ def display_market_overview():
     header_cols[4].write("**Market Cap**")
     header_cols[5].write("**7d Sparkline**")
 
-    for _, row in df.iterrows():
+    for _, row in display_df.iterrows():
         cols = st.columns([0.5, 2, 1, 2, 1.5, 2.5])
         cols[0].write(f"**{row['market_cap_rank']}**")
         
