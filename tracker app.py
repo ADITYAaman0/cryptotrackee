@@ -26,13 +26,11 @@ def load_lottie(url: str):
     """Load Lottie animation with enhanced error handling"""
     try:
         r = requests.get(url, timeout=10)
-        if r.status_code != 200:
-            return None
+        r.raise_for_status()
         return r.json()
-    except Exception:
+    except requests.exceptions.RequestException:
         return None
 
-# Custom CSS for modern card-like layout and styling
 st.markdown("""
     <style>
     .main-header {
@@ -48,23 +46,17 @@ st.markdown("""
         padding: 20px;
         border: 1px solid #4CAF50;
     }
-    .stMetric > label {
-        color: #8A8D93; /* Metric label color */
-    }
-    .stMetric > div > div > p {
-        color: #FAFAFA; /* Metric value color */
-    }
-    .stDataFrame {
-        border-radius: 12px;
-        overflow: hidden;
-    }
-    thead > tr > th {
-        background-color: #4CAF50 !important;
-        color: white !important;
+    /* Make the button look like plain text for a cleaner clickable row */
+    div[data-testid*="stButton"] > button {
+        background-color: transparent;
+        color: white;
+        text-align: left;
+        padding: 0;
         font-weight: bold;
     }
-    tbody > tr:hover {
-        background-color: #3C3D42 !important;
+    div[data-testid*="stButton"] > button:hover {
+        color: #4CAF50;
+        border-color: transparent;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -81,7 +73,7 @@ with st.container():
 
 
 # ========================
-# CORE FUNCTIONALITY
+# CORE FUNCTIONALITY & DATA
 # ========================
 @st.cache_resource
 def get_coingecko_client():
@@ -89,72 +81,9 @@ def get_coingecko_client():
 
 cg = get_coingecko_client()
 
-@st.cache_data(ttl=86400)
-def get_all_supported_currencies():
-    """Fetches all supported vs_currencies from CoinGecko API."""
-    try:
-        currencies = cg.get_supported_vs_currencies()
-        return sorted(currencies)
-    except Exception:
-        return sorted(['usd', 'eur', 'jpy', 'gbp', 'btc', 'eth'])
-
-# ========================
-# HELPER FOR SPARKLINE (WITH ERROR HANDLING)
-# ========================
-def create_sparkline(data):
-    """Creates a base64 encoded sparkline image from a list of prices."""
-    if not data or len(data) < 2:
-        return ""
-    
-    fig = go.Figure(go.Scatter(
-        x=list(range(len(data))),
-        y=data,
-        mode='lines',
-        line=dict(color='#4CAF50' if data[-1] >= data[0] else '#F44336', width=4)
-    ))
-    fig.update_layout(
-        showlegend=False,
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
-        margin=dict(l=0, r=0, t=0, b=0),
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        width=150,
-        height=50
-    )
-    
-    # FIX: Add try-except block to handle missing kaleido package gracefully
-    try:
-        buf = BytesIO()
-        fig.write_image(buf, format="png", engine="kaleido")
-        img_str = base64.b64encode(buf.getvalue()).decode()
-        return f"data:image/png;base64,{img_str}"
-    except Exception:
-        # If image generation fails, return an empty string
-        return ""
-
-# ========================
-# SIDEBAR CONTROLS
-# ========================
-with st.sidebar:
-    st.image("https://assets.coingecko.com/coins/images/1/large/bitcoin.png", width=100)
-    st.header("⚙️ Settings")
-    
-    supported_currencies = get_all_supported_currencies()
-    default_index = supported_currencies.index('usd') if 'usd' in supported_currencies else 0
-    currency = st.selectbox(
-        'Select Currency',
-        options=supported_currencies,
-        index=default_index,
-        help="Select the currency for displaying prices."
-    )
-    refresh_interval = st.slider('Refresh Interval (seconds)', 10, 300, 60, help="Set how often the data should refresh.")
-
-# ========================
-# DATA LOADING & PROCESSING
-# ========================
 @st.cache_data(ttl=60)
 def load_market_data(vs_currency: str):
+    """Loads market data for top 50 coins and caches it."""
     try:
         data = cg.get_coins_markets(
             vs_currency=vs_currency,
@@ -163,146 +92,162 @@ def load_market_data(vs_currency: str):
             sparkline=True
         )
         df = pd.DataFrame(data)
-        
-        df['Symbol'] = df['symbol'].str.upper()
-        df['Price Change (%)'] = df['price_change_percentage_24h'].fillna(0)
-        df['Logo'] = df['image'].apply(lambda x: f"<img src='{x}' width='30'>")
-        df['Trend Icon'] = df['Price Change (%)'].apply(lambda x: "🔺" if x > 0 else "🔻" if x < 0 else "➖")
-        df['7d Sparkline'] = df['sparkline_in_7d'].apply(lambda x: create_sparkline(x.get('price', [])))
-
         return df
     except Exception as e:
         st.error(f"Data loading failed: {str(e)}")
         return pd.DataFrame()
 
-df = load_market_data(currency)
+@st.cache_data(ttl=3600)
+def get_historical_data(coin_id: str, vs_currency: str, days: int = 30):
+    """Fetches historical data for a specific coin."""
+    try:
+        data = cg.get_coin_market_chart_by_id(id=coin_id, vs_currency=vs_currency, days=days)
+        historical_df = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
+        historical_df['date'] = pd.to_datetime(historical_df['timestamp'], unit='ms')
+        return historical_df[['date', 'price']]
+    except Exception:
+        return pd.DataFrame()
 
-# Initialize session state for selected coin
+
+# ========================
+# HELPER FOR SPARKLINE
+# ========================
+def create_sparkline(data):
+    """Creates a base64 encoded sparkline image."""
+    # Ensure you have kaleido installed: pip install kaleido
+    if not data or len(data) < 2:
+        return ""
+    fig = go.Figure(go.Scatter(
+        x=list(range(len(data))), y=data, mode='lines',
+        line=dict(color='#4CAF50' if data[-1] >= data[0] else '#F44336', width=4)
+    ))
+    fig.update_layout(
+        showlegend=False, xaxis=dict(visible=False), yaxis=dict(visible=False),
+        margin=dict(l=0, r=0, t=0, b=0), plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)', width=150, height=50
+    )
+    try:
+        buf = BytesIO()
+        fig.write_image(buf, format="png", engine="kaleido")
+        return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+    except Exception:
+        return ""
+
+# ========================
+# SIDEBAR CONTROLS
+# ========================
+with st.sidebar:
+    st.image("https://assets.coingecko.com/coins/images/1/large/bitcoin.png", width=100)
+    st.header("⚙️ Settings")
+    supported_currencies = sorted(cg.get_supported_vs_currencies())
+    default_index = supported_currencies.index('usd') if 'usd' in supported_currencies else 0
+    currency = st.selectbox(
+        'Select Currency', options=supported_currencies, index=default_index
+    )
+    refresh_interval = st.slider('Refresh Interval (seconds)', 10, 300, 60)
+
+
+# ========================
+# APP STATE INITIALIZATION
+# ========================
 if 'selected_coin_id' not in st.session_state:
     st.session_state.selected_coin_id = None
 
 # ========================
-# DETAIL VIEW FUNCTION
+# DATA PROCESSING
 # ========================
-def show_coin_details(coin_id, vs_currency):
-    """Displays the detailed view for a selected coin."""
-    
-    @st.cache_data(ttl=3600)
-    def get_historical_data(coin_id: str, vs_currency: str, days: int = 30):
-        try:
-            data = cg.get_coin_market_chart_by_id(id=coin_id, vs_currency=vs_currency, days=days)
-            historical_df = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
-            historical_df['date'] = pd.to_datetime(historical_df['timestamp'], unit='ms')
-            return historical_df[['date', 'price']]
-        except Exception:
-            return pd.DataFrame()
+df = load_market_data(currency)
+if not df.empty:
+    df['Symbol'] = df['symbol'].str.upper()
+    df['Price Change (%)'] = df['price_change_percentage_24h'].fillna(0)
+    df['Logo'] = df['image']
+    df['Trend Icon'] = df['Price Change (%)'].apply(lambda x: "🔺" if x > 0 else "🔻" if x < 0 else "➖")
+    df['7d Sparkline'] = df['sparkline_in_7d'].apply(lambda x: create_sparkline(x.get('price', [])))
 
-    selected_coin_data = df[df['id'] == coin_id].iloc[0]
+# ========================
+# VIEW: COIN DETAIL PAGE
+# ========================
+def display_coin_details():
+    # Find the selected coin's data in the dataframe
+    selected_coin_data = df[df['id'] == st.session_state.selected_coin_id]
     
-    st.subheader(f"Details for {selected_coin_data['name']} ({selected_coin_data['Symbol']})")
+    # Safety check: if coin not found (e.g., dropped out of top 50), go back to main view
+    if selected_coin_data.empty:
+        st.warning("Could not find the selected coin. It may have dropped out of the top 50. Returning to the main list.")
+        st.session_state.selected_coin_id = None
+        st.rerun()
+
+    coin = selected_coin_data.iloc[0]
+    
+    st.subheader(f"{coin['name']} ({coin['Symbol']})")
     
     if st.button("⬅️ Back to Market Overview"):
         st.session_state.selected_coin_id = None
         st.rerun()
 
-    historical_data = get_historical_data(coin_id, vs_currency)
+    # Display historical chart
+    historical_data = get_historical_data(coin['id'], currency)
     if not historical_data.empty:
-        fig = px.area(historical_data, x='date', y='price', title=f"{selected_coin_data['name']} Price History (Last 30 Days)", 
-                      labels={'price': f'Price ({vs_currency.upper()})', 'date': 'Date'},
+        fig = px.area(historical_data, x='date', y='price', title=f"{coin['name']} Price History (Last 30 Days)",
+                      labels={'price': f'Price ({currency.upper()})', 'date': 'Date'},
                       color_discrete_sequence=['#4CAF50'])
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("Could not load historical data for this coin.")
-        
+    
+    # Display coin details
     st.subheader("Coin Information")
-    st.write(f"**Current Price:** {selected_coin_data['current_price']:,.4f} {vs_currency.upper()}")
-    st.write(f"**Market Cap:** ${selected_coin_data['market_cap']:,}")
-    st.write(f"**24h Volume:** ${selected_coin_data['total_volume']:,}")
-    st.write(f"**24h Price Change:** {selected_coin_data['price_change_percentage_24h']:.2f}%")
+    col1, col2 = st.columns(2)
+    col1.metric("Current Price", f"{coin['current_price']:,.4f} {currency.upper()}", f"{coin['price_change_percentage_24h']:.2f}%")
+    col2.metric("Market Cap", f"<span class="math-inline">\{coin\['market\_cap'\]\:,\}"\)
+col1\.metric\("24h Volume", f"</span>{coin['total_volume']:,}")
+    col2.metric("Market Cap Rank", f"#{coin['market_cap_rank']}")
 
 
 # ========================
-# MAIN DISPLAY: KPI METRICS & DATA TABLE / DETAIL VIEW
+# VIEW: MAIN MARKET OVERVIEW
 # ========================
-if not df.empty:
-    if st.session_state.selected_coin_id:
-        show_coin_details(st.session_state.selected_coin_id, currency)
-    else:
-        st.subheader("Key Metrics")
-        btc_data = df[df['Symbol'] == 'BTC'].iloc[0]
-        eth_data = df[df['Symbol'] == 'ETH'].iloc[0]
-        top_gainer = df.loc[df['Price Change (%)'].idxmax()]
+def display_market_overview():
+    st.subheader("Key Metrics")
+    col1, col2, col3 = st.columns(3)
+    btc_data = df[df['Symbol'] == 'BTC'].iloc[0]
+    eth_data = df[df['Symbol'] == 'ETH'].iloc[0]
+    top_gainer = df.loc[df['Price Change (%)'].idxmax()]
+    
+    col1.metric(f"{btc_data['name']} ({btc_data['Symbol']})", f"{btc_data['current_price']:,} {currency.upper()}", f"{btc_data['Price Change (%)']:.2f}%")
+    col2.metric(f"{eth_data['name']} ({eth_data['Symbol']})", f"{eth_data['current_price']:,} {currency.upper()}", f"{eth_data['Price Change (%)']:.2f}%")
+    col3.metric(f"Top Gainer: {top_gainer['name']}", f"{top_gainer['current_price']:,} {currency.upper()}", f"{top_gainer['Price Change (%)']:.2f}%")
+    st.markdown("---")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric(label=f"{btc_data['name']} ({btc_data['Symbol']})", value=f"{btc_data['current_price']:,} {currency.upper()}", delta=f"{btc_data['Price Change (%)']:.2f}%")
-        with col2:
-            st.metric(label=f"{eth_data['name']} ({eth_data['Symbol']})", value=f"{eth_data['current_price']:,} {currency.upper()}", delta=f"{eth_data['Price Change (%)']:.2f}%")
-        with col3:
-            st.metric(label=f"Top Gainer: {top_gainer['name']} ({top_gainer['Symbol']})", value=f"{top_gainer['current_price']:,} {currency.upper()}", delta=f"{top_gainer['Price Change (%)']:.2f}%")
-        st.markdown("---")
+    st.subheader("Market Overview")
+    
+    # Display header row
+    header_cols = st.columns([0.5, 2, 1, 2, 1.5, 2.5])
+    header_cols[0].write("**#**")
+    header_cols[1].write("**Coin**")
+    header_cols[2].write("**Price**")
+    header_cols[3].write("**24h %**")
+    header_cols[4].write("**Market Cap**")
+    header_cols[5].write("**7d Sparkline**")
 
-        st.subheader("Market Overview")
+    # Display each coin row
+    for _, row in df.iterrows():
+        cols = st.columns([0.5, 2, 1, 2, 1.5, 2.5])
+        cols[0].write(f"**{row['market_cap_rank']}**")
         
-        # Display header row
-        header_cols = st.columns([0.5, 2, 1, 2, 1, 0.5, 2, 2, 2])
-        header_cols[0].write("**Logo**")
-        header_cols[1].write("**Name**")
-        header_cols[2].write("**Symbol**")
-        header_cols[3].write("**Current Price**")
-        header_cols[4].write("**Price Change (%)**")
-        header_cols[5].write("**Trend**")
-        header_cols[6].write("**Market Cap**")
-        header_cols[7].write("**24h Volume**")
-        header_cols[8].write("**7d Sparkline**")
-
-
-        for _, row in df.iterrows():
-            cols = st.columns([0.5, 2, 1, 2, 1, 0.5, 2, 2, 2])
-            cols[0].markdown(row['Logo'], unsafe_allow_html=True)
-            if cols[1].button(row['name'], key=f"coin_{row['id']}"):
-                st.session_state.selected_coin_id = row['id']
-                st.rerun()
-                
-            cols[2].write(row['Symbol'])
-            cols[3].write(f"**{row['current_price']:,.4f} {currency.upper()}**")
-            price_change_color = "#4CAF50" if row['Price Change (%)'] >= 0 else "#F44336"
-            cols[4].markdown(f'<b style="color: {price_change_color};">{row["Price Change (%)"]:+.2f}%</b>', unsafe_allow_html=True)
-            cols[5].write(row['Trend Icon'])
-            cols[6].write(f"${row['market_cap']:,}")
-            cols[7].write(f"${row['total_volume']:,}")
-            cols[8].markdown(f"<img src='{row['7d Sparkline']}'>", unsafe_allow_html=True)
+        # This makes the name clickable
+        if cols[1].button(f"{row['name']} ({row['Symbol']})", key=f"coin_{row['id']}"):
+            st.session_state.selected_coin_id = row['id']
+            st.rerun()
+            
+        cols[2].write(f"{row['current_price']:,.4f}")
         
-        st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+        price_change_color = "#4CAF50" if row['Price Change (%)'] >= 0 else "#F44336"
+        cols[3].markdown(f'<b style="color: {price_change_color};">{row["Price Change (%)"]:+.2f}%</b>', unsafe_allow_html=True)
+        
+        cols[4].write(f"${row['market_cap']:,}")
+        if row['7d Sparkline']:
+            cols[5].markdown(f"<img src='{row['7d Sparkline']}'>", unsafe_allow_html=True)
 
-else:
-    st.warning("Could not load market data. Please check your connection or try again later.")
-
-# ========================
-# PRICE ALERTS (WITH KEYERROR FIX)
-# ========================
-with st.sidebar:
-    st.header("🔔 Price Alerts")
-    # FIX: Only show the watchlist if the dataframe is not empty
-    if not df.empty:
-        watchlist = st.multiselect('Select coins to monitor', options=df['name'].unique())
-        for coin_name in watchlist:
-            coin_data = df[df['name'] == coin_name].iloc[0]
-            current_price = coin_data['current_price']
-            alert_price = st.number_input(f"Alert for {coin_name} ({currency.upper()})", min_value=0.0, value=float(current_price * 1.05), step=0.01, key=f"alert_{coin_name}", help=f"Set a price target. Current price: {current_price:,.4f}")
-            if current_price >= alert_price and alert_price > 0:
-                st.success(f"🚨 {coin_name} reached your target of {alert_price:,.2f}!")
-                st.balloons()
-    else:
-        st.info("Data not available for setting alerts.")
 
 # ========================
-# AUTO-REFRESH LOGIC
-# ========================
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = 0
-
-if time.time() - st.session_state.last_refresh > refresh_interval:
-    st.session_state.last_refresh = time.time()
-    st.rerun()
+# MAIN APP
