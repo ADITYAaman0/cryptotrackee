@@ -28,6 +28,7 @@ def load_lottie(url: str):
         r.raise_for_status()
         return r.json()
     except requests.exceptions.RequestException:
+        # You might want to log this error or show a silent failure
         return None
 
 st.markdown("""
@@ -86,6 +87,7 @@ def load_market_data(vs_currency: str):
             sparkline=True, price_change_percentage='24h,7d,30d'
         )
         if not data: # Handle empty API response
+            st.warning(f"No market data received from API for currency: {vs_currency}")
             return pd.DataFrame()
         df = pd.DataFrame(data)
     except Exception as e:
@@ -137,18 +139,24 @@ def get_ohlc_data(coin_id: str, vs_currency: str, days: int = 30):
 # SIDEBAR
 # ========================
 with st.sidebar:
-    st.image("https://assets.coingecko.com/coins/images/1/large/bitcoin.png", width=100)
+    st.image("https://assets.coingecko.com/coins/images/1/large/bitcoin.png", width=100) # Example image
     st.header("⚙️ Settings")
     try:
-        supported = sorted(cg.get_supported_vs_currencies())
-        cur_idx = supported.index('usd') if 'usd' in supported else 0
-    except Exception:
+        supported_currencies_list = cg.get_supported_vs_currencies()
+        if supported_currencies_list:
+            supported = sorted(supported_currencies_list)
+            cur_idx = supported.index('usd') if 'usd' in supported else 0
+        else:
+            supported = ['usd'] # Fallback
+            cur_idx = 0
+            st.warning("Could not fetch supported currencies. Using USD as default.")
+    except Exception as e:
         supported = ['usd'] # Fallback
         cur_idx = 0
-        st.warning("Could not fetch supported currencies. Using USD.")
+        st.warning(f"Could not fetch supported currencies (Error: {e}). Using USD.")
         
-    currency = st.selectbox('Currency', supported, index=cur_idx)
-    timeframe = st.selectbox('Movers Timeframe', ['24h','7d','30d'], index=1)
+    currency = st.selectbox('Currency', supported, index=cur_idx, key="currency_select")
+    timeframe = st.selectbox('Movers Timeframe', ['24h','7d','30d'], index=1, key="timeframe_select") # Default to 7d
     refresh_interval = st.slider('Refresh Interval (s)', 10,300,60, key="refresh_slider")
 
 # state init
@@ -164,18 +172,18 @@ df = load_market_data(currency)
 def display_market_movers(df_mov, title, icon, pct_col):
     st.markdown(f"<p class='mover-header'>{icon} {title}</p>", unsafe_allow_html=True)
     if df_mov.empty or pct_col not in df_mov.columns:
-        st.caption("No data available for movers.")
+        st.caption(f"No data available for {title.lower()}.")
         return
     for _,r in df_mov.iterrows():
-        ch = r.get(pct_col, 0.0)
+        ch = r.get(pct_col, 0.0) # Ensure ch always has a float value
         clr = '#4CAF50' if ch>=0 else '#F44336'
         st.markdown(f"""
             <div class='mover-row'>
-              <img src='{r.get('Logo', '')}' width='30' alt='{r.get('name', '')} logo'>
-              <span class='mover-name'>{r.get('name', 'N/A')}</span>
-              <span style='flex-grow:1;text-align:right;color:{clr};font-weight:bold;'>
-                {ch:+.2f}%
-              </span>
+                <img src='{r.get('Logo', '')}' width='30' alt='{r.get('name', '')} logo' style='vertical-align:middle; margin-right:5px;'>
+                <span class='mover-name'>{r.get('name', 'N/A')}</span>
+                <span style='flex-grow:1;text-align:right;color:{clr};font-weight:bold;'>
+                    {ch:+.2f}%
+                </span>
             </div>
         """, unsafe_allow_html=True)
 
@@ -184,26 +192,26 @@ def display_market_movers(df_mov, title, icon, pct_col):
 # ========================
 def display_coin_details():
     if 'id' not in df.columns or st.session_state.selected_coin_id is None:
-        st.warning("Coin data or selection is invalid.")
+        st.warning("Coin data or selection is invalid. Returning to overview.")
         st.session_state.selected_coin_id = None # Reset selection
-        st.rerun()
+        st.rerun() # Use rerun to refresh the page state correctly
         return
 
     sel = df[df['id']==st.session_state.selected_coin_id]
     if sel.empty:
-        st.warning("Coin not available in current dataset. Returning...")
+        st.warning("Selected coin not found in the current dataset. It might have been removed or filtered out. Returning to overview.")
         st.session_state.selected_coin_id = None
         st.rerun()
-        return # Important to return here
+        return 
         
     coin = sel.iloc[0]
     st.subheader(f"{coin.get('name', 'N/A')} ({coin.get('Symbol', 'N/A')})")
-    if st.button("⬅️ Back"): 
+    if st.button("⬅️ Back to Overview", key=f"back_button_{coin.get('id')}"): 
         st.session_state.selected_coin_id=None
-        st.rerun()
+        st.rerun() # Use rerun to refresh the page state
 
     chart_type = st.selectbox("Chart Type", ["Line","Candlestick","OHLC"], key=f"chart_type_{coin.get('id')}")
-    days = st.slider("History (days)", 7,90,30, key=f"days_{coin.get('id')}")
+    days = st.slider("History (days)", min_value=7, max_value=365, value=30, key=f"days_{coin.get('id')}")
 
     fig_data_loaded = False
     if chart_type == "Line":
@@ -216,7 +224,7 @@ def display_coin_details():
             fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color="#FFFFFF")
             st.plotly_chart(fig, use_container_width=True)
             fig_data_loaded = True
-    else:
+    else: # Candlestick or OHLC
         ohlc = get_ohlc_data(coin['id'], currency, days)
         if not ohlc.empty:
             if chart_type == "Candlestick":
@@ -226,7 +234,7 @@ def display_coin_details():
                         low=ohlc['low'], close=ohlc['close']
                     )
                 ])
-            else:  # OHLC
+            else: # OHLC
                 fig = go.Figure(data=[
                     go.Ohlc(
                         x=ohlc['date'], open=ohlc['open'], high=ohlc['high'],
@@ -234,6 +242,7 @@ def display_coin_details():
                     )
                 ])
             fig.update_layout(title=f"{coin['name']} {chart_type} Chart (Last {days}d)",
+                              xaxis_rangeslider_visible=False, # Cleaner look
                               paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="#FFFFFF", title_font_color="#FFFFFF")
             fig.update_xaxes(showgrid=False, color="#FFFFFF")
             fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color="#FFFFFF")
@@ -241,13 +250,19 @@ def display_coin_details():
             fig_data_loaded = True
     
     if not fig_data_loaded:
-        st.info("No chart data to display for the selected period or type.")
+        st.info(f"No chart data to display for {coin.get('name', 'N/A')} for the selected period or type.")
 
     st.subheader("Info & Metrics")
     c1,c2 = st.columns(2)
-    c1.metric("Price", f"{coin.get('current_price', 0):,.4f} {currency.upper()}", f"{coin.get('24h %', 0):.2f}%")
-    c2.metric("Market Cap", f"${coin.get('market_cap', 0):,}" if currency.lower() == 'usd' else f"{coin.get('market_cap', 0):,} {currency.upper()}")
-    c1.metric("24h Vol", f"${coin.get('total_volume', 0):,}" if currency.lower() == 'usd' else f"{coin.get('total_volume', 0):,} {currency.upper()}")
+    # Ensure values are numbers before formatting
+    current_price_val = coin.get('current_price', 0) if pd.notnull(coin.get('current_price')) else 0
+    change_24h_val = coin.get('24h %', 0) if pd.notnull(coin.get('24h %')) else 0
+    market_cap_val = coin.get('market_cap', 0) if pd.notnull(coin.get('market_cap')) else 0
+    total_volume_val = coin.get('total_volume', 0) if pd.notnull(coin.get('total_volume')) else 0
+    
+    c1.metric("Price", f"{current_price_val:,.4f} {currency.upper()}", f"{change_24h_val:.2f}%")
+    c2.metric("Market Cap", f"${market_cap_val:,}" if currency.lower() == 'usd' else f"{market_cap_val:,} {currency.upper()}")
+    c1.metric("24h Vol", f"${total_volume_val:,}" if currency.lower() == 'usd' else f"{total_volume_val:,} {currency.upper()}")
     c2.metric("Rank", f"#{coin.get('market_cap_rank', 'N/A')}")
 
 # ========================
@@ -257,44 +272,52 @@ def display_market_overview():
     st.subheader("Key Metrics")
     b_col, e_col, t_col = st.columns(3)
 
-    if 'Symbol' in df.columns:
+    if 'Symbol' in df.columns and not df.empty:
         btc_df = df[df['Symbol']=='BTC']
         if not btc_df.empty:
             btc = btc_df.iloc[0]
-            b_col.metric(f"BTC", f"{btc.get('current_price', 0):,.2f} {currency.upper()}", f"{btc.get('24h %', 0):.2f}%")
+            btc_price = btc.get('current_price', 0) if pd.notnull(btc.get('current_price')) else 0
+            btc_change = btc.get('24h %', 0) if pd.notnull(btc.get('24h %')) else 0
+            b_col.metric(f"BTC Price", f"{btc_price:,.2f} {currency.upper()}", f"{btc_change:.2f}%")
         else:
-            b_col.metric(f"BTC", "N/A", "N/A")
+            b_col.metric(f"BTC Price", "N/A", "N/A")
 
         eth_df = df[df['Symbol']=='ETH']
         if not eth_df.empty:
             eth = eth_df.iloc[0]
-            e_col.metric(f"ETH", f"{eth.get('current_price', 0):,.2f} {currency.upper()}", f"{eth.get('24h %', 0):.2f}%")
+            eth_price = eth.get('current_price', 0) if pd.notnull(eth.get('current_price')) else 0
+            eth_change = eth.get('24h %', 0) if pd.notnull(eth.get('24h %')) else 0
+            e_col.metric(f"ETH Price", f"{eth_price:,.2f} {currency.upper()}", f"{eth_change:.2f}%")
         else:
-            e_col.metric(f"ETH", "N/A", "N/A")
+            e_col.metric(f"ETH Price", "N/A", "N/A")
     else:
-        b_col.metric(f"BTC", "N/A", "Data Error")
-        e_col.metric(f"ETH", "N/A", "Data Error")
+        b_col.metric(f"BTC Price", "N/A", "Data Error")
+        e_col.metric(f"ETH Price", "N/A", "Data Error")
         
     if '24h %' in df.columns and not df.empty and not df['24h %'].isna().all():
         try:
             top24 = df.loc[df['24h %'].idxmax()]
-            t_col.metric(f"Top 24h Gainer", f"{top24.get('name', 'N/A')}", f"{top24.get('24h %', 0):.2f}%")
-        except ValueError: # Handles case where '24h %' might be all NaN or idxmax fails
-             t_col.metric(f"Top 24h Gainer", "N/A", "Error")
+            top24_change = top24.get('24h %', 0) if pd.notnull(top24.get('24h %')) else 0
+            t_col.metric(f"Top 24h Gainer", f"{top24.get('name', 'N/A')}", f"{top24_change:.2f}%")
+        except ValueError: 
+            t_col.metric(f"Top 24h Gainer", "N/A", "Error")
     else:
         t_col.metric(f"Top 24h Gainer", "N/A", "N/A")
     st.markdown("---")
 
     col_map = {'24h':'24h %','7d':'7d %','30d':'30d %'}
-    pc = col_map.get(timeframe, '24h %') # Default to '24h %' if timeframe somehow invalid
+    pc = col_map.get(timeframe, '24h %') 
     st.subheader(f"Top Movers ({timeframe})")
     
-    if pc in df.columns and not df[pc].isna().all():
-        g = df.sort_values(pc, ascending=False).head(10)
-        l = df.sort_values(pc, ascending=True).head(10)
+    if pc in df.columns and not df.empty and not df[pc].isna().all():
+        # Ensure the column is numeric for sorting
+        df_copy = df.copy() # Work on a copy to avoid SettingWithCopyWarning
+        df_copy[pc] = pd.to_numeric(df_copy[pc], errors='coerce').fillna(0)
+        g = df_copy.sort_values(pc, ascending=False).head(10)
+        l = df_copy.sort_values(pc, ascending=True).head(10)
     else:
-        g, l = pd.DataFrame(), pd.DataFrame() # Empty dataframes if column is missing
-        st.caption(f"Data for {timeframe} movers not available.")
+        g, l = pd.DataFrame(), pd.DataFrame() 
+        st.caption(f"Data for {timeframe} movers not available or column '{pc}' is missing/empty.")
 
     gc, lc = st.columns(2)
     with gc: display_market_movers(g, f"Gainers ({timeframe})", "🚀", pc)
@@ -302,50 +325,63 @@ def display_market_overview():
     st.markdown("---")
 
     st.subheader("Market Overview")
-    # Use a subset of df for display to avoid issues if df is very large after filtering, though head(50) manages this.
+    
     tbl_data = df.head(50) 
     if tbl_data.empty:
         st.info("No market data to display in the overview table.")
         return
 
-    # Define headers for the custom table
-    header_cols = st.columns([0.5, 2, 1.5, 1, 2, 2.5]) # Adjusted Price column width
+    header_cols_spec = [0.5, 2.5, 1.5, 1, 2, 2] # Adjusted Coin and Sparkline column width slightly
+    header_cols = st.columns(header_cols_spec)
     headers = ["#", "Coin", f"Price ({currency.upper()})", "24h %", "Market Cap", "7d Sparkline"]
     for col, header_text in zip(header_cols, headers):
         col.markdown(f"**{header_text}**")
 
-    for _, r in tbl_data.iterrows():
-        row_cols = st.columns([0.5, 2, 1.5, 1, 2, 2.5]) # Must match header_cols definition
+    for index, r in tbl_data.iterrows(): # Using index for a more robust unique key
+        row_cols = st.columns(header_cols_spec) 
         row_cols[0].write(str(r.get('market_cap_rank', 'N/A')))
         
-        # Button for coin selection
-        button_key = f"select_{r.get('id', r.get('name', 'unknown'))}" # Ensure key is unique
-        coin_label = f"{r.get('name', 'N/A')} ({r.get('Symbol', 'N/A')})"
-        if row_cols[1].button(coin_label, key=button_key, help=f"View details for {r.get('name', 'N/A')}"):
-            st.session_state.selected_coin_id=r.get('id')
+        coin_id = r.get('id', f"unknown_{index}")
+        coin_name = r.get('name', 'N/A')
+        coin_symbol = r.get('Symbol', 'N/A')
+        button_key = f"select_{coin_id}" 
+        coin_label = f"{coin_name} ({coin_symbol})"
+
+        # Use a container for the button to manage layout if needed, or directly place button.
+        # Adding the image next to the button requires more complex HTML or careful column use.
+        # For simplicity, button first:
+        if row_cols[1].button(coin_label, key=button_key, help=f"View details for {coin_name}"):
+            st.session_state.selected_coin_id = coin_id # Use the actual ID
             st.rerun()
             
-        row_cols[2].write(f"{r.get('current_price', 0):,.4f}")
+        current_price_val_row = r.get('current_price', 0) if pd.notnull(r.get('current_price')) else 0
+        row_cols[2].write(f"{current_price_val_row:,.4f}")
         
-        change_24h = r.get('24h %', 0.0)
-        clr = '#4CAF50' if change_24 >= 0 else '#F44336'
-        row_cols[3].markdown(f"<b style='color:{clr};'>{change_24:+.2f}%</b>", unsafe_allow_html=True)
+        change_24h = r.get('24h %', 0.0) if pd.notnull(r.get('24h %')) else 0.0
+        clr = '#4CAF50' if change_24h >= 0 else '#F44336'
+        row_cols[3].markdown(f"<div style='color:{clr}; font-weight:bold; text-align:left;'>{change_24h:+.2f}%</div>", unsafe_allow_html=True)
         
-        row_cols[4].write(f"${r.get('market_cap', 0):,}" if currency.lower() == 'usd' else f"{r.get('market_cap', 0):,} {currency.upper()}")
+        market_cap_val_row = r.get('market_cap', 0) if pd.notnull(r.get('market_cap')) else 0
+        row_cols[4].write(f"${market_cap_val_row:,}" if currency.lower() == 'usd' else f"{market_cap_val_row:,} {currency.upper()}")
         
         sparkline_html = r.get('7d Sparkline', '')
         if sparkline_html:
-            row_cols[5].markdown(f"<img src='{sparkline_html}' alt='7d sparkline for {r.get('name', '')}'>", unsafe_allow_html=True)
+            row_cols[5].markdown(f"<img src='{sparkline_html}' alt='7d sparkline for {coin_name}'>", unsafe_allow_html=True)
         else:
             row_cols[5].caption("N/A")
+        # Add a thin line after each row for better separation
+        st.markdown("<hr style='margin-top:0.3rem; margin-bottom:0.3rem; border-top: 1px solid #333;'>", unsafe_allow_html=True)
 
 
 # ================
 # MAIN
 # ================
 if df.empty:
-    st.warning("Unable to load market data. Please check your connection or try refreshing.")
-    # Optionally, attempt a manual refresh button here or guide user
+    st.warning("Unable to load market data. Please check your internet connection, ensure the CoinGecko API is accessible, or try refreshing the page after a few moments.")
+    if st.button("🔄 Try Refreshing Data"):
+        st.cache_data.clear() # Clear data cache
+        st.cache_resource.clear() # Clear resource cache (like CG client if needed, though usually not for this)
+        st.rerun()
 else:
     if st.session_state.selected_coin_id:
         display_coin_details()
@@ -353,54 +389,66 @@ else:
         display_market_overview()
 
 # ========================
-# PRICE ALERTS
+# PRICE ALERTS (in sidebar)
 # ========================
 with st.sidebar:
-    st.header("🔔 Alerts")
-    if not df.empty and 'name' in df.columns and 'current_price' in df.columns:
-        # Ensure 'name' column has unique values for multiselect if used as options
-        # If names are not unique, this could cause issues. IDs are better for selection.
-        # For simplicity, using names as provided in original code.
-        available_coins_for_alert = df['name'].drop_duplicates().tolist()
-        if not available_coins_for_alert:
-            st.info("No coins available for setting alerts.")
+    st.header("🔔 Price Alerts")
+    if not df.empty and 'id' in df.columns and 'name' in df.columns and 'current_price' in df.columns:
+        # Create a list of tuples (id, name) for multiselect, ensuring unique IDs are used internally
+        # and unique names are shown to the user.
+        # If names are not unique, the first occurrence's ID will be used by this mapping.
+        coin_options_for_alert = df[['id', 'name']].drop_duplicates(subset=['name']).set_index('id')['name'].to_dict()
+        
+        if not coin_options_for_alert:
+            st.info("No coins available for setting alerts (data might be sparse).")
         else:
-            watch = st.multiselect('Monitor Coins', available_coins_for_alert, key="alert_multiselect")
-            for coin_name_watched in watch:
-                coin_data_series = df[df['name']==coin_name_watched]
+            # Store selected IDs, show names to user
+            selected_coin_ids_for_alert = st.multiselect(
+                'Monitor Coins', 
+                options=list(coin_options_for_alert.keys()), 
+                format_func=lambda coin_id: coin_options_for_alert[coin_id], # Show name
+                key="alert_multiselect"
+            )
+            
+            for coin_id_watched in selected_coin_ids_for_alert:
+                coin_data_series = df[df['id']==coin_id_watched]
                 if not coin_data_series.empty:
                     cd = coin_data_series.iloc[0]
+                    coin_name_watched = cd.get('name', coin_id_watched) # Get name for display
                     current_price = cd.get('current_price', 0.0)
-                    
-                    # State key for this coin's target price
-                    target_price_key = f"alert_target_{cd.get('id', coin_name_watched)}" 
-                    
-                    # Initialize target in session state if not present
-                    if target_price_key not in st.session_state:
-                        st.session_state[target_price_key] = float(current_price * 1.05) if current_price > 0 else 0.0
+                    if not isinstance(current_price, (int, float)): current_price = 0.0 # Ensure numeric
 
-                    # User input for target price, value taken from session_state
+                    target_price_key = f"alert_target_{coin_id_watched}" 
+                    
+                    if target_price_key not in st.session_state:
+                        st.session_state[target_price_key] = float(current_price * 1.05) if current_price > 0 else 0.01 # Default 5% higher or small value
+
+                    # Use a unique key for each number_input widget
+                    widget_key = f"user_alert_input_{coin_id_watched}"
+                    
                     user_target_price = st.number_input(
-                        f"Alert for {coin_name_watched} (current: {current_price:,.4f})",
-                        value=float(st.session_state[target_price_key]),
+                        f"Target for {coin_name_watched} (now: {current_price:,.4f} {currency.upper()})",
+                        value=float(st.session_state[target_price_key]), # Ensure float for value
                         min_value=0.0,
-                        format="%.4f", # Allow appropriate precision
-                        key=f"user_alert_input_{cd.get('id', coin_name_watched)}" # Unique key for the widget
+                        format="%.4f", 
+                        key=widget_key 
                     )
                     
-                    # Update session_state with the value from number_input
-                    st.session_state[target_price_key] = user_target_price
+                    st.session_state[target_price_key] = user_target_price # Persist changed target
                     
-                    # Check alert condition using the persisted target from session_state
-                    if current_price > 0 and st.session_state[target_price_key] > 0 and current_price >= st.session_state[target_price_key]:
-                        st.success(f"🔔 ALERT! {coin_name_watched} reached {st.session_state[target_price_key]:,.4f} {currency.upper()}!")
-                        st.balloons()
-                        # Optionally, clear the alert or the target once hit
-                        # del st.session_state[target_price_key] # Example: remove to stop further alerts for this target
+                    if current_price > 0 and user_target_price > 0 and current_price >= user_target_price:
+                        alert_triggered_key = f"alert_triggered_{coin_id_watched}_{user_target_price}"
+                        # Trigger alert only once for a specific target price unless reset
+                        if alert_triggered_key not in st.session_state:
+                            st.success(f"🔔 ALERT! {coin_name_watched} reached {user_target_price:,.4f} {currency.upper()}!")
+                            st.balloons()
+                            st.session_state[alert_triggered_key] = True # Mark as triggered
+                else:
+                    st.caption(f"Data for coin ID {coin_id_watched} (for alert) not found.")
     else:
-        st.info("Market data not loaded, cannot set alerts.")
+        st.info("Market data not fully loaded, cannot set alerts yet.")
 
-# auto-refresh
-if time.time() - st.session_state.last_refresh > refresh_interval:
+# auto-refresh logic
+if time.time() - st.session_state.get('last_refresh', 0) > refresh_interval: # Use .get for safety
     st.session_state.last_refresh = time.time()
     st.rerun()
