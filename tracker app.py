@@ -29,16 +29,17 @@ st.markdown("""
     text-align:center; color:#FFF;
     margin-bottom:20px;
 }
+/* glowing search input */
+@keyframes glow {
+  0%   { box-shadow: 0 0 5px #4CAF50; }
+  50%  { box-shadow: 0 0 20px #4CAF50; }
+  100% { box-shadow: 0 0 5px #4CAF50; }
+}
 [data-baseweb="input"] input {
     animation: glow 2s infinite;
     border: 2px solid #4CAF50 !important;
     border-radius: 8px;
     padding: 8px 12px !important;
-}
-@keyframes glow {
-  0%   { box-shadow: 0 0 5px #4CAF50; }
-  50%  { box-shadow: 0 0 20px #4CAF50; }
-  100% { box-shadow: 0 0 5px #4CAF50; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -95,8 +96,11 @@ def create_sparkline(data):
 @st.cache_data(ttl=60)
 def load_market_data(vs_currency: str):
     data = cg.get_coins_markets(
-        vs_currency=vs_currency, order='market_cap_desc', per_page=250,
-        sparkline=True, price_change_percentage='24h,7d,30d'
+        vs_currency=vs_currency,
+        order='market_cap_desc',
+        per_page=250,
+        sparkline=True,
+        price_change_percentage='24h,7d,30d'
     )
     df = pd.DataFrame(data)
     df['24h %'] = df['price_change_percentage_24h_in_currency'].fillna(0)
@@ -148,7 +152,7 @@ if search_term:
     )
     df = df[mask]
 
-# maintain selected coin
+# maintain selected_coin state
 if 'selected_coin_id' not in st.session_state:
     st.session_state.selected_coin_id = None
 
@@ -158,42 +162,72 @@ if 'selected_coin_id' not in st.session_state:
 def display_market_movers(df_mov, title, icon, pct_col):
     st.markdown(f"**{icon} {title}**")
     for _, r in df_mov.iterrows():
-        ch, clr = r[pct_col], '#4CAF50' if r[pct_col]>=0 else '#F44336'
-        st.markdown(f"<div style='display:flex;align-items:center'>"
-                    f"<img src='{r['Logo']}' width='24'><span style='margin-left:8px'>{r['name']}</span>"
-                    f"<span style='margin-left:auto;color:{clr};font-weight:bold'>{ch:+.2f}%</span></div>",
-                    unsafe_allow_html=True)
+        ch = r[pct_col]
+        clr = '#4CAF50' if ch >= 0 else '#F44336'
+        st.markdown(
+            f"<div style='display:flex;align-items:center'>"
+            f"<img src='{r['Logo']}' width='24'><span style='margin-left:8px'>{r['name']}</span>"
+            f"<span style='margin-left:auto;color:{clr};font-weight:bold'>{ch:+.2f}%</span></div>",
+            unsafe_allow_html=True
+        )
 
-def display_market_overview():
+def display_market_overview(df_overview):
+    if df_overview.empty:
+        st.warning("No coins match your search.")
+        return
+
     st.subheader("Key Metrics")
-    b,e,t = st.columns(3)
-    btc = df[df['Symbol']=='BTC'].iloc[0]
-    eth = df[df['Symbol']=='ETH'].iloc[0]
-    top24 = df.loc[df['24h %'].idxmax()]
-    b.metric("BTC", f"{btc['current_price']:.2f}", f"{btc['24h %']:.2f}%")
-    e.metric("ETH", f"{eth['current_price']:.2f}", f"{eth['24h %']:.2f}%")
-    t.metric("Top Gainer (24h)", f"{top24['name']} ({top24['24h %']:.2f}%)")
+    bcol, ecol, tcol = st.columns(3)
+
+    # BTC metric
+    btc_row = df_overview[df_overview['Symbol']=='BTC']
+    if not btc_row.empty:
+        btc = btc_row.iloc[0]
+        bcol.metric("BTC", f"{btc['current_price']:.2f}", f"{btc['24h %']:.2f}%")
+    else:
+        bcol.metric("BTC", "N/A", "—")
+
+    # ETH metric
+    eth_row = df_overview[df_overview['Symbol']=='ETH']
+    if not eth_row.empty:
+        eth = eth_row.iloc[0]
+        ecol.metric("ETH", f"{eth['current_price']:.2f}", f"{eth['24h %']:.2f}%")
+    else:
+        ecol.metric("ETH", "N/A", "—")
+
+    # Top gainer from filtered set
+    top = df_overview.loc[df_overview['24h %'].idxmax()]
+    tcol.metric("Top 24h Gainer", f"{top['name']} ({top['24h %']:.2f}%)")
+
     st.markdown("---")
 
+    # Top movers
     pc = {'24h':'24h %','7d':'7d %','30d':'30d %'}[timeframe]
-    g = df.nlargest(10, pc)
-    l = df.nsmallest(10, pc)
+    gainers = df_overview.nlargest(10, pc)
+    losers  = df_overview.nsmallest(10, pc)
     gc, lc = st.columns(2)
-    with gc: display_market_movers(g, "Gainers", "🚀", pc)
-    with lc: display_market_movers(l, "Losers", "📉", pc)
+    with gc:
+        display_market_movers(gainers, "🚀 Gainers", "🚀", pc)
+    with lc:
+        display_market_movers(losers, "📉 Losers", "📉", pc)
+
     st.markdown("---")
 
+    # Overview table
     st.subheader("Market Overview")
-    tbl = df.head(50)
-    cols = st.columns([0.5,2,1,1,1.5,2.5])
+    tbl = df_overview.head(50)
     headers = ["#","Coin","Price","24h %","Market Cap","7d Sparkline"]
+    col_widths = [0.5,2,1,1,1.5,2.5]
+    cols = st.columns(col_widths)
     for col, h in zip(cols, headers):
         col.write(f"**{h}**")
+
     for _, r in tbl.iterrows():
-        c0, c1, c2, c3, c4, c5 = st.columns([0.5,2,1,1,1.5,2.5])
+        c0, c1, c2, c3, c4, c5 = st.columns(col_widths)
         c0.write(r['market_cap_rank'])
         if c1.button(f"{r['name']} ({r['Symbol']})", key=r['id']):
-            st.session_state.selected_coin_id = r['id']; st.rerun()
+            st.session_state.selected_coin_id = r['id']
+            st.rerun()
         c2.write(f"{r['current_price']:.4f}")
         clr = '#4CAF50' if r['24h %']>=0 else '#F44336'
         c3.markdown(f"<span style='color:{clr}'>{r['24h %']:+.2f}%</span>", unsafe_allow_html=True)
@@ -207,10 +241,12 @@ def display_coin_details():
         st.warning("Coin not available. Going back…")
         st.session_state.selected_coin_id = None
         st.rerun()
+
     coin = sel.iloc[0]
     st.subheader(f"{coin['name']} ({coin['Symbol']})")
     if st.button("⬅️ Back"):
-        st.session_state.selected_coin_id = None; st.rerun()
+        st.session_state.selected_coin_id = None
+        st.rerun()
 
     chart_type = st.selectbox("Chart Type", ["Line","Candlestick","OHLC"])
     days = st.slider("History (days)", 7, 90, 30)
@@ -218,7 +254,8 @@ def display_coin_details():
     if chart_type == "Line":
         hist = get_historical_data(coin['id'], currency, days)
         fig = px.line(hist, x='date', y='price',
-                      title=f"{coin['name']} Price ({days}d)")
+                      title=f"{coin['name']} Price (Last {days}d)",
+                      labels={'price':f"Price ({currency.upper()})",'date':'Date'})
         fig.update_layout(paper_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig, use_container_width=True)
     else:
@@ -247,7 +284,7 @@ else:
     if st.session_state.selected_coin_id:
         display_coin_details()
     else:
-        display_market_overview()
+        display_market_overview(df)
 
 # ========================
 # PRICE ALERTS & AUTO-REFRESH
@@ -266,6 +303,7 @@ with st.sidebar:
                 st.success(f"{c} hit {target}!")
                 st.balloons()
 
+# auto-refresh
 if time.time() - st.session_state.last_refresh > refresh_interval:
     st.session_state.last_refresh = time.time()
     st.rerun()
