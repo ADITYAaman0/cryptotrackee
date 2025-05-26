@@ -37,8 +37,42 @@ st.markdown("""
 .mover-header {font-size:1.5rem; font-weight:bold; color:#FFF; padding-bottom:10px; border-bottom:2px solid #4CAF50;}
 .mover-row {display:flex; align-items:center; margin-bottom:10px;}
 .mover-name {font-weight:bold; margin-left:10px;}
-.stTextInput > div > div > input {border-radius: 8px; border: 1px solid #4A4A4A;}
-.stTextInput label {font-weight: bold; color: #E0E0E0;}
+/* Attractive Search Bar Styling */
+.stTextInput > div > div > input {
+    border-radius: 25px; /* More rounded corners */
+    border: 2px solid #4CAF50; /* Green border */
+    padding: 10px 15px; /* More padding */
+    box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2); /* Subtle shadow */
+    transition: 0.3s; /* Smooth transition for hover/focus */
+    color: #E0E0E0; /* Text color */
+    background-color: #1A1A1A; /* Darker background */
+}
+.stTextInput > div > div > input:focus {
+    border-color: #2196F3; /* Blue on focus */
+    box-shadow: 0 4px 12px 0 rgba(33,150,243,0.3); /* Blue shadow on focus */
+}
+.stTextInput label {
+    font-weight: bold;
+    color: #E0E0E0;
+    font-size: 1.1rem; /* Slightly larger label */
+    margin-bottom: 5px;
+    display: block; /* Make label a block element for spacing */
+}
+/* Style for the "Clear Search" button */
+.stButton > button {
+    border-radius: 8px;
+    border: 1px solid #F44336; /* Red border */
+    background-color: #F44336; /* Red background */
+    color: white;
+    padding: 8px 15px;
+    font-weight: bold;
+    transition: 0.2s;
+}
+.stButton > button:hover {
+    background-color: #D32F2F; /* Darker red on hover */
+    border-color: #D32F2F;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -87,7 +121,6 @@ def load_market_data(vs_currency: str):
             sparkline=True, price_change_percentage='24h,7d,30d'
         )
         if not data:
-            # st.warning(f"No market data received from API for currency: {vs_currency}.") # Reduced verbosity
             return pd.DataFrame()
         df_loaded = pd.DataFrame(data)
         if df_loaded.empty:
@@ -157,16 +190,16 @@ with st.sidebar:
             supported = sorted([str(c).lower() for c in supported_currencies_list])
             cur_idx = supported.index('usd') if 'usd' in supported else 0
         else:
-            supported = ['usd'] 
+            supported = ['usd']  
             cur_idx = 0
             st.warning("Could not fetch supported currencies. Using USD.")
     except Exception:
-        supported = ['usd'] 
+        supported = ['usd']  
         cur_idx = 0
         st.warning(f"Could not fetch supported currencies. Using USD.")
         
     currency = st.selectbox('Currency', supported, index=cur_idx, key="currency_select")
-    timeframe = st.selectbox('Movers Timeframe', ['24h','7d','30d'], index=1, key="timeframe_select") 
+    timeframe = st.selectbox('Movers Timeframe', ['24h','7d','30d'], index=1, key="timeframe_select")  
     refresh_interval = st.slider('Refresh Interval (s)', 10, 300, 60, key="refresh_slider")
 
 # ========================
@@ -189,7 +222,7 @@ def display_market_movers(df_mov, title, icon, pct_col_name):
         st.caption(f"No data available for {title.lower()}.")
         return
     for _,r_mov in df_mov.iterrows():
-        ch = r_mov.get(pct_col_name, 0.0) 
+        ch = r_mov.get(pct_col_name, 0.0)  
         ch = ch if pd.notnull(ch) else 0.0
         clr = '#4CAF50' if ch>=0 else '#F44336'
         logo_url = r_mov.get('Logo', '')
@@ -206,20 +239,16 @@ def display_market_movers(df_mov, title, icon, pct_col_name):
 
 def render_coins_table(data_df_to_render, currency_symbol_for_table):
     if data_df_to_render.empty:
-        # This function assumes the caller handles "no results" messages for search.
-        # For default overview, if df itself is empty, it's handled before.
-        # If data_df_to_render is empty (e.g. search yielded no results but df wasn't empty),
-        # the caller should show an st.info message. This function will just show nothing.
         return
 
-    header_cols_spec = [0.4, 2.2, 1.5, 0.8, 1.8, 1.8] 
+    header_cols_spec = [0.4, 2.2, 1.5, 0.8, 1.8, 1.8]  
     header_cols = st.columns(header_cols_spec)
     headers = ["#", "Coin", f"Price ({currency_symbol_for_table.upper()})", "24h %", "Market Cap", "7d Sparkline"]
     for col, header_text in zip(header_cols, headers):
         col.markdown(f"**{header_text}**")
 
     for index, r_row_table in data_df_to_render.iterrows():
-        row_cols = st.columns(header_cols_spec) 
+        row_cols = st.columns(header_cols_spec)  
         
         if not isinstance(r_row_table, pd.Series):
             continue
@@ -230,11 +259,11 @@ def render_coins_table(data_df_to_render, currency_symbol_for_table):
         coin_name_tbl_render = str(r_row_table.get('name', 'N/A'))
         coin_symbol_tbl_render = str(r_row_table.get('Symbol', 'N/A'))
         
-        button_key_render = f"select_TABLE_{coin_id_tbl_render}_{index}" 
+        button_key_render = f"select_TABLE_{coin_id_tbl_render}_{index}"  
         coin_label_render = f"{coin_name_tbl_render} ({coin_symbol_tbl_render})"
 
         if row_cols[1].button(coin_label_render, key=button_key_render, help=f"View details for {coin_name_tbl_render}"):
-            st.session_state.selected_coin_id = coin_id_tbl_render 
+            st.session_state.selected_coin_id = coin_id_tbl_render  
             st.session_state.search_query = "" # Clear search when navigating to detail view
             st.rerun()
             
@@ -262,7 +291,7 @@ def display_coin_details():
     selected_id = st.session_state.selected_coin_id
     if selected_id is None or 'id' not in df.columns:
         st.warning("Coin data or selection is invalid. Returning to overview.")
-        st.session_state.selected_coin_id = None 
+        st.session_state.selected_coin_id = None  
         st.rerun()
         return
 
@@ -271,7 +300,7 @@ def display_coin_details():
         st.warning(f"Selected coin (ID: {selected_id}) not found. Returning to overview.")
         st.session_state.selected_coin_id = None
         st.rerun()
-        return 
+        return  
         
     coin = sel.iloc[0]
     coin_name_detail = coin.get('name', 'N/A')
@@ -279,7 +308,7 @@ def display_coin_details():
     coin_id_detail = coin.get('id', 'unknown')
 
     st.subheader(f"{coin_name_detail} ({coin_symbol_detail})")
-    if st.button("⬅️ Back to Overview", key=f"back_button_{coin_id_detail}"): 
+    if st.button("⬅️ Back to Overview", key=f"back_button_{coin_id_detail}"):  
         st.session_state.selected_coin_id=None
         st.session_state.search_query = "" # Clear search when going back from detail
         st.rerun()
@@ -298,7 +327,7 @@ def display_coin_details():
             fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color="#FFFFFF")
             st.plotly_chart(fig, use_container_width=True)
             fig_data_loaded = True
-    else: 
+    else:  
         ohlc = get_ohlc_data(coin_id_detail, currency, days)
         if not ohlc.empty and all(col in ohlc.columns for col in ['open', 'high', 'low', 'close']):
             if chart_type == "Candlestick":
@@ -316,7 +345,7 @@ def display_coin_details():
             fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color="#FFFFFF")
             st.plotly_chart(fig, use_container_width=True)
             fig_data_loaded = True
-    
+            
     if not fig_data_loaded:
         st.info(f"No chart data to display for {coin_name_detail} for the selected period or type.")
 
@@ -337,15 +366,13 @@ def display_coin_details():
 # MARKET OVERVIEW (Main Display Logic with Search)
 # ========================
 def display_market_overview():
-    # Search Bar
-    search_cols_c1, search_cols_c2, search_cols_c3 = st.columns([0.5, 2, 0.5]) # Centering the search bar a bit
-    with search_cols_c2:
-        search_query_input = st.text_input(
-            "🔍 Search Coins (by Name or Symbol)",
-            value=st.session_state.get("search_query", ""),
-            placeholder="E.g., Bitcoin or BTC",
-            key="search_bar_input_main_page" # Ensure unique key
-        )
+    # Search Bar - spans across the content area
+    search_query_input = st.text_input(
+        "🔍 Search Coins (by Name or Symbol)",
+        value=st.session_state.get("search_query", ""),
+        placeholder="E.g., Bitcoin or BTC",
+        key="search_bar_input_main_page"
+    )
 
     if search_query_input != st.session_state.get("search_query", ""):
         st.session_state.search_query = search_query_input
@@ -354,19 +381,15 @@ def display_market_overview():
     search_active = bool(st.session_state.get("search_query", "").strip())
 
     if search_active:
-        st.markdown("---") 
+        st.markdown("---")
         
-        back_button_cols_c1, back_button_cols_c2 = st.columns([1, 4])
-        with back_button_cols_c1:
-            if st.button("⬅️ Clear Search", key="clear_search_button_active"):
-                st.session_state.search_query = ""
-                st.rerun()
-        with back_button_cols_c2:
-            st.subheader(f"Search Results for \"{st.session_state.search_query}\"")
+        # Back option (Clear Search)
+        st.button("⬅️ Clear Search", key="clear_search_button_active", on_click=lambda: st.session_state.update(search_query=""), help="Click to clear the search and return to main overview.")
+        
+        st.subheader(f"Search Results for \"{st.session_state.search_query}\"")
         
         query = st.session_state.search_query.lower()
         
-        # Ensure df is not empty before attempting to search
         if df.empty:
             st.warning("Market data is not available for searching.")
             return
@@ -388,14 +411,13 @@ def display_market_overview():
             st.info(f"No coins found matching \"{st.session_state.search_query}\".")
         else:
             st.markdown(f"Found **{len(search_results_df)}** matching coin(s). Displaying all results.")
-            render_coins_table(search_results_df, currency) 
+            render_coins_table(search_results_df, currency)  
 
     else: # Default view (no active search)
         st.subheader("Key Metrics")
         b_col, e_col, t_col = st.columns(3)
         if 'Symbol' in df.columns and not df.empty:
             btc_df = df[df['Symbol']=='BTC']
-            # ... (rest of Key Metrics logic as in previous versions)
             if not btc_df.empty:
                 btc = btc_df.iloc[0]
                 btc_price = btc.get('current_price', 0); btc_price = btc_price if pd.notnull(btc_price) else 0
@@ -418,11 +440,11 @@ def display_market_overview():
             if not df_numeric_24h['24h %'].isna().all():
                 try:
                     top24_idx = df_numeric_24h['24h %'].idxmax()
-                    top24 = df.loc[top24_idx] 
+                    top24 = df.loc[top24_idx]  
                     top24_change = top24.get('24h %', 0.0); top24_change = top24_change if pd.notnull(top24_change) else 0.0
                     t_col.metric(f"Top 24h Gainer", f"{top24.get('name', 'N/A')}", f"{top24_change:.2f}%")
                 except ValueError: # Handles cases like all NaNs after coerce
-                     t_col.metric(f"Top 24h Gainer", "N/A", "Error")
+                    t_col.metric(f"Top 24h Gainer", "N/A", "Error")
             else:
                 t_col.metric(f"Top 24h Gainer", "N/A", "No valid gainers")
         else:
@@ -451,7 +473,7 @@ def display_market_overview():
             st.info("No data for Top 50, showing all available if any.")
             render_coins_table(df, currency)
         elif tbl_data_default.empty: # If df itself is empty, this was handled by main already
-             st.info("No market data to display.")
+            st.info("No market data to display.")
         else:
             render_coins_table(tbl_data_default, currency)
 
@@ -461,7 +483,7 @@ def display_market_overview():
 if df.empty:
     st.warning("Unable to load market data. Please check your internet connection, ensure the CoinGecko API is accessible, or try refreshing the page after a few moments.")
     if st.button("🔄 Try Refreshing Data", key="refresh_data_button_main"):
-        st.cache_data.clear() 
+        st.cache_data.clear()  
         st.rerun()
 else:
     if st.session_state.selected_coin_id:
@@ -485,8 +507,8 @@ with st.sidebar:
             st.info("No coins available for setting alerts.")
         else:
             selected_coin_ids_for_alert = st.multiselect(
-                'Monitor Coins', 
-                options=list(alert_coin_options_dict.keys()), 
+                'Monitor Coins',  
+                options=list(alert_coin_options_dict.keys()),  
                 format_func=lambda coin_id: alert_coin_options_dict.get(coin_id, str(coin_id)),
                 key="alert_multiselect"
             )
@@ -495,11 +517,11 @@ with st.sidebar:
                 coin_data_series_list_alert = df[df['id'] == coin_id_watched_alert]
                 if not coin_data_series_list_alert.empty:
                     cd_alert = coin_data_series_list_alert.iloc[0]
-                    coin_name_watched_alert = str(cd_alert.get('name', coin_id_watched_alert)) 
+                    coin_name_watched_alert = str(cd_alert.get('name', coin_id_watched_alert))  
                     current_price_alert_val = cd_alert.get('current_price', 0.0)
                     current_price_alert_val = float(current_price_alert_val) if pd.notnull(current_price_alert_val) else 0.0
 
-                    target_price_key_alert = f"alert_target_{coin_id_watched_alert}" 
+                    target_price_key_alert = f"alert_target_{coin_id_watched_alert}"  
                     
                     if target_price_key_alert not in st.session_state:
                         st.session_state[target_price_key_alert] = float(current_price_alert_val * 1.05) if current_price_alert_val > 0 else 0.01
@@ -508,13 +530,13 @@ with st.sidebar:
                     
                     user_target_price_alert = st.number_input(
                         f"Target for {coin_name_watched_alert} (now: {current_price_alert_val:,.4f} {currency.upper()})",
-                        value=float(st.session_state[target_price_key_alert]), 
+                        value=float(st.session_state[target_price_key_alert]),  
                         min_value=0.0,
-                        format="%.6f", 
-                        key=widget_key_alert_input 
+                        format="%.6f",  
+                        key=widget_key_alert_input  
                     )
                     
-                    st.session_state[target_price_key_alert] = user_target_price_alert 
+                    st.session_state[target_price_key_alert] = user_target_price_alert  
                     
                     alert_hit_key_name = f"alert_hit_{coin_id_watched_alert}_{user_target_price_alert}"
                     
@@ -522,7 +544,7 @@ with st.sidebar:
                         if not st.session_state.get(alert_hit_key_name, False):
                             st.success(f"🔔 ALERT! {coin_name_watched_alert} reached {user_target_price_alert:,.4f} {currency.upper()}!")
                             st.balloons()
-                            st.session_state[alert_hit_key_name] = True 
+                            st.session_state[alert_hit_key_name] = True  
                     elif st.session_state.get(alert_hit_key_name, False) and current_price_alert_val < user_target_price_alert:
                         st.session_state[alert_hit_key_name] = False # Reset if price drops
                 # else: st.caption(f"Alert data for {coin_id_watched_alert} not found.") # Can be verbose
