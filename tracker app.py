@@ -53,10 +53,15 @@ st.markdown("""
         text-align: left;
         padding: 0;
         font-weight: bold;
+        font-size: 1em; /* Ensure button text matches table text size */
     }
     div[data-testid*="stButton"] > button:hover {
         color: #4CAF50;
         border-color: transparent;
+    }
+    div[data-testid*="stButton"] > button:focus {
+        box-shadow: none !important;
+        color: #4CAF50;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -168,14 +173,14 @@ if not df.empty:
 # VIEW: COIN DETAIL PAGE
 # ========================
 def display_coin_details():
-    # Find the selected coin's data in the dataframe
+    """Renders the detailed view for a selected cryptocurrency."""
     selected_coin_data = df[df['id'] == st.session_state.selected_coin_id]
     
-    # Safety check: if coin not found (e.g., dropped out of top 50), go back to main view
     if selected_coin_data.empty:
         st.warning("Could not find the selected coin. It may have dropped out of the top 50. Returning to the main list.")
         st.session_state.selected_coin_id = None
         st.rerun()
+        return
 
     coin = selected_coin_data.iloc[0]
     
@@ -185,7 +190,6 @@ def display_coin_details():
         st.session_state.selected_coin_id = None
         st.rerun()
 
-    # Display historical chart
     historical_data = get_historical_data(coin['id'], currency)
     if not historical_data.empty:
         fig = px.area(historical_data, x='date', y='price', title=f"{coin['name']} Price History (Last 30 Days)",
@@ -194,12 +198,16 @@ def display_coin_details():
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig, use_container_width=True)
     
-    # Display coin details
     st.subheader("Coin Information")
     col1, col2 = st.columns(2)
     col1.metric("Current Price", f"{coin['current_price']:,.4f} {currency.upper()}", f"{coin['price_change_percentage_24h']:.2f}%")
-    col2.metric("Market Cap", f"<span class="math-inline">\{coin\['market\_cap'\]\:,\}"\)
-col1\.metric\("24h Volume", f"</span>{coin['total_volume']:,}")
+    
+    # +++++++++ THE FIX IS HERE +++++++++
+    # This line was corrected to remove the invalid syntax.
+    col2.metric("Market Cap", f"${coin['market_cap']:,}")
+    # +++++++++++++++++++++++++++++++++++
+    
+    col1.metric("24h Volume", f"${coin['total_volume']:,}")
     col2.metric("Market Cap Rank", f"#{coin['market_cap_rank']}")
 
 
@@ -207,6 +215,7 @@ col1\.metric\("24h Volume", f"</span>{coin['total_volume']:,}")
 # VIEW: MAIN MARKET OVERVIEW
 # ========================
 def display_market_overview():
+    """Renders the main table of all cryptocurrencies."""
     st.subheader("Key Metrics")
     col1, col2, col3 = st.columns(3)
     btc_data = df[df['Symbol'] == 'BTC'].iloc[0]
@@ -220,7 +229,6 @@ def display_market_overview():
 
     st.subheader("Market Overview")
     
-    # Display header row
     header_cols = st.columns([0.5, 2, 1, 2, 1.5, 2.5])
     header_cols[0].write("**#**")
     header_cols[1].write("**Coin**")
@@ -229,12 +237,10 @@ def display_market_overview():
     header_cols[4].write("**Market Cap**")
     header_cols[5].write("**7d Sparkline**")
 
-    # Display each coin row
     for _, row in df.iterrows():
         cols = st.columns([0.5, 2, 1, 2, 1.5, 2.5])
         cols[0].write(f"**{row['market_cap_rank']}**")
         
-        # This makes the name clickable
         if cols[1].button(f"{row['name']} ({row['Symbol']})", key=f"coin_{row['id']}"):
             st.session_state.selected_coin_id = row['id']
             st.rerun()
@@ -250,4 +256,39 @@ def display_market_overview():
 
 
 # ========================
-# MAIN APP
+# MAIN APP LOGIC (CONTROLLER)
+# ========================
+if df.empty:
+    st.warning("Could not load market data. Please check your connection or try again later.")
+else:
+    if st.session_state.selected_coin_id:
+        display_coin_details()
+    else:
+        display_market_overview()
+
+# ========================
+# SIDEBAR: PRICE ALERTS
+# ========================
+with st.sidebar:
+    st.header("🔔 Price Alerts")
+    if not df.empty:
+        watchlist = st.multiselect('Select coins to monitor', options=df['name'].unique())
+        for coin_name in watchlist:
+            coin_data = df[df['name'] == coin_name].iloc[0]
+            current_price = coin_data['current_price']
+            alert_price = st.number_input(f"Alert for {coin_name}", value=float(current_price * 1.05), key=f"alert_{coin_name}")
+            if current_price >= alert_price > 0:
+                st.success(f"🚨 {coin_name} has reached your target of {alert_price:,.2f}!")
+                st.balloons()
+    else:
+        st.info("Data not available for setting alerts.")
+
+# ========================
+# AUTO-REFRESH LOGIC
+# ========================
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = time.time()
+
+if time.time() - st.session_state.last_refresh > refresh_interval:
+    st.session_state.last_refresh = time.time()
+    st.rerun()
