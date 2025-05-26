@@ -13,7 +13,7 @@ from io import BytesIO
 # APP CONFIGURATION
 # ========================
 st.set_page_config(
-    page_title="Crypto Tracker Dashboard",
+    page_title="CRYPTO TRACKEE",
     page_icon="💸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -181,7 +181,7 @@ df = load_market_data(currency)
 # MAIN DISPLAY: KPI METRICS & DATA TABLE
 # ========================
 if not df.empty:
-    st.subheader("📊 Key Metrics")
+    st.subheader("Key Metrics")
     btc_data = df[df['Symbol'] == 'BTC'].iloc[0]
     eth_data = df[df['Symbol'] == 'ETH'].iloc[0]
     top_gainer = df.loc[df['Price Change (%)'].idxmax()]
