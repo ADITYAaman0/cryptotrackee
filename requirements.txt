@@ -7,3 +7,4 @@ matplotlib
 requests
 streamlit-autorefresh
 streamlit-lottie
+kaleido
