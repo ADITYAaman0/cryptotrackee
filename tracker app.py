@@ -177,33 +177,16 @@ def load_market_data(vs_currency: str):
 
 df = load_market_data(currency)
 
+# Initialize session state for selected coin
+if 'selected_coin_id' not in st.session_state:
+    st.session_state.selected_coin_id = None
+
 # ========================
-# MAIN DISPLAY: KPI METRICS & DATA TABLE
+# DETAIL VIEW FUNCTION
 # ========================
-if not df.empty:
-    st.subheader("Key Metrics")
-    btc_data = df[df['Symbol'] == 'BTC'].iloc[0]
-    eth_data = df[df['Symbol'] == 'ETH'].iloc[0]
-    top_gainer = df.loc[df['Price Change (%)'].idxmax()]
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(label=f"{btc_data['name']} ({btc_data['Symbol']})", value=f"{btc_data['current_price']:,} {currency.upper()}", delta=f"{btc_data['Price Change (%)']:.2f}%")
-    with col2:
-        st.metric(label=f"{eth_data['name']} ({eth_data['Symbol']})", value=f"{eth_data['current_price']:,} {currency.upper()}", delta=f"{eth_data['Price Change (%)']:.2f}%")
-    with col3:
-        st.metric(label=f"Top Gainer: {top_gainer['name']} ({top_gainer['Symbol']})", value=f"{top_gainer['current_price']:,} {currency.upper()}", delta=f"{top_gainer['Price Change (%)']:.2f}%")
-    st.markdown("---")
-
-    st.subheader("Market Overview")
-    display_df = df[['Logo', 'name', 'Symbol', 'current_price', 'Price Change (%)', 'Trend Icon', 'market_cap', 'total_volume', '7d Sparkline']].rename(columns={'name': 'Name', 'current_price': 'Current Price', 'market_cap': 'Market Cap', 'total_volume': '24h Volume'})
-    st.markdown(display_df.to_html(escape=False, formatters={'Current Price': lambda x: f"<b>{x:,.4f} {currency.upper()}</b>", 'Price Change (%)': lambda x: f'<b style="color: {"#4CAF50" if x >= 0 else "#F44336"};">{x:+.2f}%</b>', 'Market Cap': lambda x: f"${x:,.0f}", '24h Volume': lambda x: f"${x:,.0f}", '7d Sparkline': lambda x: f"<img src='{x}'>"}, index=False), unsafe_allow_html=True)
-    st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.subheader("📈 Historical Price Chart")
-    selected_coin = st.selectbox('Select Cryptocurrency', options=df['name'].unique(), index=0)
-
+def show_coin_details(coin_id, vs_currency):
+    """Displays the detailed view for a selected coin."""
+    
     @st.cache_data(ttl=3600)
     def get_historical_data(coin_id: str, vs_currency: str, days: int = 30):
         try:
@@ -214,12 +197,85 @@ if not df.empty:
         except Exception:
             return pd.DataFrame()
 
-    coin_id = df[df['name'] == selected_coin].iloc[0]['id']
-    historical_data = get_historical_data(coin_id, currency)
+    selected_coin_data = df[df['id'] == coin_id].iloc[0]
+    
+    st.subheader(f"Details for {selected_coin_data['name']} ({selected_coin_data['Symbol']})")
+    
+    if st.button("⬅️ Back to Market Overview"):
+        st.session_state.selected_coin_id = None
+        st.rerun()
+
+    historical_data = get_historical_data(coin_id, vs_currency)
     if not historical_data.empty:
-        fig = px.area(historical_data, x='date', y='price', title=f"{selected_coin} Price History", labels={'price': f'Price ({currency.upper()})', 'date': 'Date'}, color_discrete_sequence=['#4CAF50'])
+        fig = px.area(historical_data, x='date', y='price', title=f"{selected_coin_data['name']} Price History (Last 30 Days)", 
+                      labels={'price': f'Price ({vs_currency.upper()})', 'date': 'Date'},
+                      color_discrete_sequence=['#4CAF50'])
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Could not load historical data for this coin.")
+        
+    st.subheader("Coin Information")
+    st.write(f"**Current Price:** {selected_coin_data['current_price']:,.4f} {vs_currency.upper()}")
+    st.write(f"**Market Cap:** ${selected_coin_data['market_cap']:,}")
+    st.write(f"**24h Volume:** ${selected_coin_data['total_volume']:,}")
+    st.write(f"**24h Price Change:** {selected_coin_data['price_change_percentage_24h']:.2f}%")
+
+
+# ========================
+# MAIN DISPLAY: KPI METRICS & DATA TABLE / DETAIL VIEW
+# ========================
+if not df.empty:
+    if st.session_state.selected_coin_id:
+        show_coin_details(st.session_state.selected_coin_id, currency)
+    else:
+        st.subheader("Key Metrics")
+        btc_data = df[df['Symbol'] == 'BTC'].iloc[0]
+        eth_data = df[df['Symbol'] == 'ETH'].iloc[0]
+        top_gainer = df.loc[df['Price Change (%)'].idxmax()]
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(label=f"{btc_data['name']} ({btc_data['Symbol']})", value=f"{btc_data['current_price']:,} {currency.upper()}", delta=f"{btc_data['Price Change (%)']:.2f}%")
+        with col2:
+            st.metric(label=f"{eth_data['name']} ({eth_data['Symbol']})", value=f"{eth_data['current_price']:,} {currency.upper()}", delta=f"{eth_data['Price Change (%)']:.2f}%")
+        with col3:
+            st.metric(label=f"Top Gainer: {top_gainer['name']} ({top_gainer['Symbol']})", value=f"{top_gainer['current_price']:,} {currency.upper()}", delta=f"{top_gainer['Price Change (%)']:.2f}%")
+        st.markdown("---")
+
+        st.subheader("Market Overview")
+        
+        # Display header row
+        header_cols = st.columns([0.5, 2, 1, 2, 1, 0.5, 2, 2, 2])
+        header_cols[0].write("**Logo**")
+        header_cols[1].write("**Name**")
+        header_cols[2].write("**Symbol**")
+        header_cols[3].write("**Current Price**")
+        header_cols[4].write("**Price Change (%)**")
+        header_cols[5].write("**Trend**")
+        header_cols[6].write("**Market Cap**")
+        header_cols[7].write("**24h Volume**")
+        header_cols[8].write("**7d Sparkline**")
+
+
+        for _, row in df.iterrows():
+            cols = st.columns([0.5, 2, 1, 2, 1, 0.5, 2, 2, 2])
+            cols[0].markdown(row['Logo'], unsafe_allow_html=True)
+            if cols[1].button(row['name'], key=f"coin_{row['id']}"):
+                st.session_state.selected_coin_id = row['id']
+                st.rerun()
+                
+            cols[2].write(row['Symbol'])
+            cols[3].write(f"**{row['current_price']:,.4f} {currency.upper()}**")
+            price_change_color = "#4CAF50" if row['Price Change (%)'] >= 0 else "#F44336"
+            cols[4].markdown(f'<b style="color: {price_change_color};">{row["Price Change (%)"]:+.2f}%</b>', unsafe_allow_html=True)
+            cols[5].write(row['Trend Icon'])
+            cols[6].write(f"${row['market_cap']:,}")
+            cols[7].write(f"${row['total_volume']:,}")
+            cols[8].markdown(f"<img src='{row['7d Sparkline']}'>", unsafe_allow_html=True)
+        
+        st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+
 else:
     st.warning("Could not load market data. Please check your connection or try again later.")
 
