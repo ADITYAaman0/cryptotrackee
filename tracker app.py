@@ -46,7 +46,7 @@ with st.container():
     with col2:
         anim = load_lottie("https://lottie.host/7905f328-9844-41d3-83f2-6962a1e67c9c/uB9iS90Y9K.json")
         if anim: st_lottie(anim, height=200)
-        st.markdown("<p class='central-header'>Crypto Tracker Dashboard</p>", unsafe_allow_html=True)
+        st.markdown("<p class='central-header'>CRYPTO TRACKEE</p>", unsafe_allow_html=True)
     st.markdown("---")
 
 # ========================
