@@ -25,7 +25,7 @@ st.set_page_config(
 def load_lottie(url: str):
     try:
         r = requests.get(url, timeout=10)
-        r.raise_or_status()
+        r.raise_for_status()
         return r.json()
     except requests.exceptions.RequestException:
         return None
@@ -392,8 +392,7 @@ def display_coin_details():
     with top_chart_cols[1]:
         st.markdown(f"**<span style='font-size:1.5rem;'>{coin_name_detail}</span>** <span style='color:#AAA;'>{coin_symbol_detail.upper()}</span>", unsafe_allow_html=True)
     
-    # Get latest OHLC data for display in the top bar
-    # Fetch 1-day OHLC for the latest Open, High, Low, Close (1-minute granularity)
+    # Get latest OHLC data for display in the top bar (1-minute granularity)
     ohlc_for_metrics = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=1) 
     latest_price_info = ohlc_for_metrics.iloc[-1] if not ohlc_for_metrics.empty else {}
     
@@ -406,7 +405,7 @@ def display_coin_details():
 
     if not ohlc_for_metrics.empty:
         top_chart_cols[4].markdown(f"<span class='chart-info-metric'>O: <span class='chart-info-value'>{latest_price_info.get('open',0.0):,.4f}</span></span>", unsafe_allow_html=True)
-        top_chart_cols[5].markdown(f"<span class='chart-info-metric'>H: <span class='chart-info-value'>{latest_price_info.get('high',0.0):,.4f}</span></span>", unsafe_allow_html=True)
+        top_chart_cols[5].markdown(f"<span class='chart-info-metric'>H: <span class='chart_info-value'>{latest_price_info.get('high',0.0):,.4f}</span></span>", unsafe_allow_html=True)
         top_chart_cols[6].markdown(f"<span class='chart-info-metric'>L: <span class='chart-info-value'>{latest_price_info.get('low',0.0):,.4f}</span></span>", unsafe_allow_html=True)
         top_chart_cols[7].markdown(f"<span class='chart-info-metric'>C: <span class='chart-info-value'>{latest_price_info.get('close',0.0):,.4f}</span></span>", unsafe_allow_html=True)
 
@@ -421,13 +420,16 @@ def display_coin_details():
             st.rerun()
     
     with chart_controls_cols[1]:
-        # Replacing slider with radio buttons for specific timeframes
-        # Added 1m, 5m, 10m, 15m, 30m, 1h, 4h
+        # Updated timeframe options to include intraday and longer periods
         timeframe_options = ['1m', '5m', '10m', '15m', '30m', '1h', '4h', '1D', '7D', '1M', '3M', '6M', '1Y', 'MAX']
+        
+        # Set default index carefully. If '1D' is in options, use its index.
+        default_timeframe_index = timeframe_options.index('1D') if '1D' in timeframe_options else 0
+
         selected_timeframe = st.radio(
             "Select Timeframe",
             options=timeframe_options,
-            index=timeframe_options.index('1D'), # Default to 1 Day (1-min candles)
+            index=default_timeframe_index, # Default to 1 Day (1-min candles)
             horizontal=True,
             key=f"chart_timeframe_{coin_id_detail}"
         )
@@ -435,117 +437,125 @@ def display_coin_details():
     with chart_controls_cols[2]:
         chart_type = st.selectbox("Chart Type", ["Candlestick","Line","OHLC"], index=0, key=f"chart_type_{coin_id_detail}") # Default to Candlestick
 
-    # Chart rendering
+    # Chart rendering logic
     fig_data_loaded = False
     ohlc_data_for_chart = pd.DataFrame()
+    line_data_for_chart = pd.DataFrame()
 
-    # Determine how to fetch and prepare OHLC data based on selected_timeframe
+    # Define CoinGecko 'days' mapping for OHLC/Historical API calls
+    coingecko_days_map_ohlc = {
+        '1D': 1, # 1-min interval
+        '7D': 7, # hourly interval
+        '1M': 30, # daily interval
+        '3M': 90, # daily interval
+        '6M': 180, # daily interval
+        '1Y': 365, # daily interval
+        'MAX': 365 # daily interval (capped at 365 for detailed OHLC)
+    }
+
+    # First, fetch the base data (1-min for intraday, or direct for longer periods)
     if selected_timeframe in ['1m', '5m', '10m', '15m', '30m', '1h', '4h', '1D']:
-        # Fetch 1-minute data for the last 24 hours for all intraday intervals
+        # For all intraday and '1D' (which means 1-minute data for 24h), fetch the raw 1-minute data
         raw_1min_ohlc = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=1)
         if not raw_1min_ohlc.empty:
-            if selected_timeframe == '1m':
+            if selected_timeframe == '1m' or selected_timeframe == '1D':
                 ohlc_data_for_chart = raw_1min_ohlc
-            elif selected_timeframe == '1D': # 1D implies 1-min candles for 24h as per CoinGecko
-                 ohlc_data_for_chart = raw_1min_ohlc
             else: # Resample for other intraday intervals
-                interval_map = {
+                interval_map_pandas = {
                     '5m': '5min', '10m': '10min', '15m': '15min', '30m': '30min',
                     '1h': '1H', '4h': '4H'
                 }
-                resampling_interval = interval_map.get(selected_timeframe)
+                resampling_interval = interval_map_pandas.get(selected_timeframe)
                 if resampling_interval:
                     ohlc_data_for_chart = resample_ohlc_data(raw_1min_ohlc, resampling_interval)
+                else:
+                    st.info(f"Unsupported resampling interval: {selected_timeframe}")
         else:
             st.info(f"Not enough 1-minute data to generate {selected_timeframe} chart for {coin_name_detail}.")
             
     elif selected_timeframe in ['7D', '1M', '3M', '6M', '1Y', 'MAX']:
-        # For longer timeframes, use CoinGecko's default hourly/daily intervals
-        coingecko_days_param = {
-            '7D': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'MAX': 365
-        }.get(selected_timeframe)
-        ohlc_data_for_chart = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=coingecko_days_param)
+        # For longer timeframes, use CoinGecko's default hourly/daily intervals directly
+        days_param = coingecko_days_map_ohlc.get(selected_timeframe)
+        if days_param:
+            ohlc_data_for_chart = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=days_param)
+        else:
+            st.info(f"Invalid timeframe selection for direct OHLC fetch: {selected_timeframe}")
 
-    # Now, plot the chart if data is available
-    if not ohlc_data_for_chart.empty and all(col in ohlc_data_for_chart.columns for col in ['open', 'high', 'low', 'close']):
-        if chart_type == "Candlestick":
-            fig = go.Figure(data=[
-                go.Candlestick(
-                    x=ohlc_data_for_chart['date'], 
-                    open=ohlc_data_for_chart['open'], 
-                    high=ohlc_data_for_chart['high'], 
-                    low=ohlc_data_for_chart['low'], 
-                    close=ohlc_data_for_chart['close'],
-                    increasing_line_color='#4CAF50', # Green for increasing
-                    decreasing_line_color='#F44336' # Red for decreasing
-                )
-            ])
-        else: # OHLC
-            fig = go.Figure(data=[
-                go.Ohlc(
-                    x=ohlc_data_for_chart['date'], 
-                    open=ohlc_data_for_chart['open'], 
-                    high=ohlc_data_for_chart['high'], 
-                    low=ohlc_data_for_chart['low'], 
-                    close=ohlc_data_for_chart['close'],
-                    increasing_line_color='#4CAF50', # Green for increasing
-                    decreasing_line_color='#F44336' # Red for decreasing
-                )
-            ])
-        
-        fig.update_layout(
-            title={
-                'text': f"{coin_name_detail} {chart_type} Chart ({selected_timeframe} intervals)",
-                'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top'
-            },
-            xaxis_rangeslider_visible=False,
-            paper_bgcolor='rgba(0,0,0,0)', 
-            plot_bgcolor='rgba(0,0,0,0)', 
-            font_color="#E0E0E0", # Light grey font color
-            title_font_color="#FFFFFF",
-            xaxis=dict(
-                showgrid=False, 
-                color="#E0E0E0", # X-axis labels color
-                linecolor="#444", # X-axis line color
-                gridcolor='rgba(128,128,128,0.1)' # Lighter grid lines
-            ),
-            yaxis=dict(
-                showgrid=True, 
-                gridcolor='rgba(128,128,128,0.1)', # Lighter grid lines
-                color="#E0E0E0", # Y-axis labels color
-                linecolor="#444", # Y-axis line color
-                side='right' # Y-axis on the right
-            ),
-            hovermode="x unified" # Enable unified hover for better data display on hover
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        fig_data_loaded = True
+    # Now, plot the chart based on the prepared data
+    if chart_type in ["Candlestick", "OHLC"]:
+        if not ohlc_data_for_chart.empty and all(col in ohlc_data_for_chart.columns for col in ['open', 'high', 'low', 'close']):
+            if chart_type == "Candlestick":
+                fig = go.Figure(data=[
+                    go.Candlestick(
+                        x=ohlc_data_for_chart['date'], 
+                        open=ohlc_data_for_chart['open'], 
+                        high=ohlc_data_for_chart['high'], 
+                        low=ohlc_data_for_chart['low'], 
+                        close=ohlc_data_for_chart['close'],
+                        increasing_line_color='#4CAF50', # Green for increasing
+                        decreasing_line_color='#F44336' # Red for decreasing
+                    )
+                ])
+            else: # OHLC
+                fig = go.Figure(data=[
+                    go.Ohlc(
+                        x=ohlc_data_for_chart['date'], 
+                        open=ohlc_data_for_chart['open'], 
+                        high=ohlc_data_for_chart['high'], 
+                        low=ohlc_data_for_chart['low'], 
+                        close=ohlc_data_for_chart['close'],
+                        increasing_line_color='#4CAF50', # Green for increasing
+                        decreasing_line_color='#F44336' # Red for decreasing
+                    )
+                ])
+            
+            fig.update_layout(
+                title={
+                    'text': f"{coin_name_detail} {chart_type} Chart ({selected_timeframe} intervals)",
+                    'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top'
+                },
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)', 
+                font_color="#E0E0E0", # Light grey font color
+                title_font_color="#FFFFFF",
+                xaxis=dict(
+                    showgrid=False, 
+                    color="#E0E0E0", # X-axis labels color
+                    linecolor="#444", # X-axis line color
+                    gridcolor='rgba(128,128,128,0.1)' # Lighter grid lines
+                ),
+                yaxis=dict(
+                    showgrid=True, 
+                    gridcolor='rgba(128,128,128,0.1)', # Lighter grid lines
+                    color="#E0E0E0", # Y-axis labels color
+                    linecolor="#444", # Y-axis line color
+                    side='right' # Y-axis on the right
+                ),
+                hovermode="x unified" # Enable unified hover for better data display on hover
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            fig_data_loaded = True
+        else:
+            st.info(f"No OHLC data available for {coin_name_detail} for the selected '{selected_timeframe}' timeframe.")
     elif chart_type == "Line":
-        # For line charts, CoinGecko only provides 'prices' (not OHLC directly).
-        # We will use the 'get_historical_data' which is based on days.
-        # If an intraday interval is selected for a line chart, we should ideally
-        # fetch 1-min price data and perhaps resample it or just plot the raw 1-min prices.
-        # For simplicity, we'll plot the 1-min prices for intraday.
-        
-        # Mapping selected_timeframe to days for get_historical_data
-        hist_days_param = 1 # Default to 1 day for intraday line chart
-        if selected_timeframe == '7D': hist_days_param = 7
-        elif selected_timeframe == '1M': hist_days_param = 30
-        elif selected_timeframe == '3M': hist_days_param = 90
-        elif selected_timeframe == '6M': hist_days_param = 180
-        elif selected_timeframe == '1Y': hist_days_param = 365
-        elif selected_timeframe == 'MAX': hist_days_param = 365 # Max for historical prices is often 1 year detail
+        # For line charts, CoinGecko's historical data endpoint (`get_coin_market_chart_by_id`)
+        # provides price data which is generally at a higher frequency for shorter `days` params.
+        # We'll use this directly for line charts.
 
-        hist = get_historical_data(coin_id_detail, currency, days=hist_days_param)
-        if not hist.empty and 'price' in hist.columns and not hist['price'].isna().all():
-            # For line chart, we don't resample OHLC, just plot price over time.
-            # If an intraday interval like '5m' is selected, we'll still show the 1-min granularity
-            # for the last 24 hours, as get_historical_data doesn't do resampling on its own.
-            fig = px.line(hist, x='date', y='price', title=f"{coin_name_detail} Price (Last {selected_timeframe})",
+        # Map selected_timeframe to days parameter for get_historical_data
+        hist_days_param = 1 # Default for intraday line chart
+        if selected_timeframe in ['7D', '1M', '3M', '6M', '1Y', 'MAX']:
+            hist_days_param = coingecko_days_map_ohlc.get(selected_timeframe, 1) # Reuse map, default to 1 day if not found
+        
+        line_data_for_chart = get_historical_data(coin_id_detail, currency, days=hist_days_param)
+        
+        if not line_data_for_chart.empty and 'price' in line_data_for_chart.columns and not line_data_for_chart['price'].isna().all():
+            fig = px.line(line_data_for_chart, x='date', y='price', title=f"{coin_name_detail} Price ({selected_timeframe} intervals)",
                           labels={'price':f'Price ({currency.upper()})','date':'Date'})
             fig.update_layout(
                 title={
-                    'text': f"{coin_name_detail} Price (Last {selected_timeframe})",
+                    'text': f"{coin_name_detail} Price ({selected_timeframe} intervals)",
                     'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top'
                 },
                 paper_bgcolor='rgba(0,0,0,0)', 
@@ -569,6 +579,8 @@ def display_coin_details():
             )
             st.plotly_chart(fig, use_container_width=True)
             fig_data_loaded = True
+        else:
+            st.info(f"No line chart data available for {coin_name_detail} for the selected '{selected_timeframe}' timeframe.")
             
     if not fig_data_loaded:
         st.info(f"No chart data to display for {coin_name_detail} for the selected period or type. CoinGecko API might not provide this specific interval directly, or there isn't enough historical data.")
@@ -584,7 +596,7 @@ def display_coin_details():
     c1_detail.metric("Market Cap", f"${market_cap_val:,}" if currency.lower() == 'usd' else f"{market_cap_val:,} {currency.upper()}")
     c2_detail.metric("24h Vol", f"${total_volume_val:,}" if currency.lower() == 'usd' else f"{total_volume_val:,} {currency.upper()}")
     c1_detail.metric("Rank", f"#{coin.get('market_cap_rank', 'N/A')}")
-    # Removed redundant price and 24h change metrics as they are now in the top bar.
+
 
 # ========================
 # MARKET OVERVIEW (Main Display Logic with Search)
