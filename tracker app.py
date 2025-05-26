@@ -53,6 +53,12 @@ def load_lottie(url: str):
         return None
 
 # ========================
+# INITIALIZE SESSION-STATE
+# ========================
+if 'search_term' not in st.session_state:
+    st.session_state.search_term = ""
+
+# ========================
 # HEADER & SEARCH BOX
 # ========================
 with st.container():
@@ -63,8 +69,16 @@ with st.container():
             st_lottie(anim, height=200)
         st.markdown("<p class='central-header'>CRYPTO TRACKEE</p>", unsafe_allow_html=True)
     st.markdown("---")
-    # ─── SEARCH BOX ALWAYS VISIBLE ────────────────────────────────────────────
-    search_term = st.text_input("🔍 Search Coins", placeholder="Type name or symbol…")
+
+    # ——— Search + Clear Button —————————————————————————————————————————
+    st.session_state.search_term = st.text_input(
+        "🔍 Search Coins",
+        placeholder="Type name or symbol…",
+        key="search_term"
+    )
+    if st.button("🔙 Clear Search"):
+        st.session_state.search_term = ""
+        st.experimental_rerun()
     st.markdown("---")
 
 # ========================
@@ -144,11 +158,11 @@ if 'last_refresh' not in st.session_state:
 
 df = load_market_data(currency)
 
-# apply search filter if any
-if search_term:
+# apply search filter
+if st.session_state.search_term:
     mask = (
-        df['name'].str.contains(search_term, case=False, na=False) |
-        df['Symbol'].str.contains(search_term, case=False, na=False)
+        df['name'].str.contains(st.session_state.search_term, case=False, na=False) |
+        df['Symbol'].str.contains(st.session_state.search_term, case=False, na=False)
     )
     df = df[mask]
 
@@ -162,8 +176,7 @@ if 'selected_coin_id' not in st.session_state:
 def display_market_movers(df_mov, title, icon, pct_col):
     st.markdown(f"**{icon} {title}**")
     for _, r in df_mov.iterrows():
-        ch = r[pct_col]
-        clr = '#4CAF50' if ch >= 0 else '#F44336'
+        ch, clr = r[pct_col], ('#4CAF50' if r[pct_col]>=0 else '#F44336')
         st.markdown(
             f"<div style='display:flex;align-items:center'>"
             f"<img src='{r['Logo']}' width='24'><span style='margin-left:8px'>{r['name']}</span>"
@@ -179,7 +192,7 @@ def display_market_overview(df_overview):
     st.subheader("Key Metrics")
     bcol, ecol, tcol = st.columns(3)
 
-    # BTC metric
+    # BTC
     btc_row = df_overview[df_overview['Symbol']=='BTC']
     if not btc_row.empty:
         btc = btc_row.iloc[0]
@@ -187,7 +200,7 @@ def display_market_overview(df_overview):
     else:
         bcol.metric("BTC", "N/A", "—")
 
-    # ETH metric
+    # ETH
     eth_row = df_overview[df_overview['Symbol']=='ETH']
     if not eth_row.empty:
         eth = eth_row.iloc[0]
@@ -195,35 +208,28 @@ def display_market_overview(df_overview):
     else:
         ecol.metric("ETH", "N/A", "—")
 
-    # Top gainer from filtered set
+    # Top Gainer
     top = df_overview.loc[df_overview['24h %'].idxmax()]
     tcol.metric("Top 24h Gainer", f"{top['name']} ({top['24h %']:.2f}%)")
-
     st.markdown("---")
 
-    # Top movers
+    # Movers
     pc = {'24h':'24h %','7d':'7d %','30d':'30d %'}[timeframe]
-    gainers = df_overview.nlargest(10, pc)
-    losers  = df_overview.nsmallest(10, pc)
     gc, lc = st.columns(2)
-    with gc:
-        display_market_movers(gainers, "🚀 Gainers", "🚀", pc)
-    with lc:
-        display_market_movers(losers, "📉 Losers", "📉", pc)
-
+    with gc: display_market_movers(df_overview.nlargest(10, pc), "🚀 Gainers", "🚀", pc)
+    with lc: display_market_movers(df_overview.nsmallest(10, pc), "📉 Losers", "📉", pc)
     st.markdown("---")
 
     # Overview table
     st.subheader("Market Overview")
     tbl = df_overview.head(50)
     headers = ["#","Coin","Price","24h %","Market Cap","7d Sparkline"]
-    col_widths = [0.5,2,1,1,1.5,2.5]
-    cols = st.columns(col_widths)
+    widths  = [0.5,2,1,1,1.5,2.5]
+    cols = st.columns(widths)
     for col, h in zip(cols, headers):
         col.write(f"**{h}**")
-
     for _, r in tbl.iterrows():
-        c0, c1, c2, c3, c4, c5 = st.columns(col_widths)
+        c0, c1, c2, c3, c4, c5 = st.columns(widths)
         c0.write(r['market_cap_rank'])
         if c1.button(f"{r['name']} ({r['Symbol']})", key=r['id']):
             st.session_state.selected_coin_id = r['id']
@@ -238,10 +244,9 @@ def display_market_overview(df_overview):
 def display_coin_details():
     sel = df[df['id']==st.session_state.selected_coin_id]
     if sel.empty:
-        st.warning("Coin not available. Going back…")
+        st.warning("Coin not available. Returning…")
         st.session_state.selected_coin_id = None
         st.rerun()
-
     coin = sel.iloc[0]
     st.subheader(f"{coin['name']} ({coin['Symbol']})")
     if st.button("⬅️ Back"):
@@ -297,13 +302,11 @@ with st.sidebar:
         watch = st.multiselect('Monitor Coins', df['name'].tolist())
         for c in watch:
             cd = df[df['name']==c].iloc[0]
-            curr = cd['current_price']
-            target = st.number_input(f"Alert for {c}", value=curr * 1.05, key=f"a_{c}")
-            if curr >= target > 0:
+            target = st.number_input(f"Alert for {c}", value=cd['current_price']*1.05, key=f"a_{c}")
+            if cd['current_price'] >= target > 0:
                 st.success(f"{c} hit {target}!")
                 st.balloons()
 
-# auto-refresh
 if time.time() - st.session_state.last_refresh > refresh_interval:
     st.session_state.last_refresh = time.time()
     st.rerun()
