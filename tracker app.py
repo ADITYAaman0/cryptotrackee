@@ -53,7 +53,7 @@ def load_lottie(url: str):
         return None
 
 # ========================
-# INITIALIZE SESSION-STATE
+# SESSION-STATE FOR SEARCH
 # ========================
 if 'search_term' not in st.session_state:
     st.session_state.search_term = ""
@@ -70,15 +70,16 @@ with st.container():
         st.markdown("<p class='central-header'>CRYPTO TRACKEE</p>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # ——— Search + Clear Button —————————————————————————————————————————
+    # Search input + clear button
     st.session_state.search_term = st.text_input(
-        "🔍 Search Coins",
+        "🔍 Search Coins (only filters Overview table)",
         placeholder="Type name or symbol…",
         key="search_term"
     )
     if st.button("🔙 Clear Search"):
         st.session_state.search_term = ""
         st.experimental_rerun()
+
     st.markdown("---")
 
 # ========================
@@ -103,18 +104,14 @@ def create_sparkline(data):
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         width=150, height=50
     )
-    buf = BytesIO()
-    fig.write_image(buf, format='png', engine='kaleido')
+    buf = BytesIO(); fig.write_image(buf, format='png', engine='kaleido')
     return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
 
 @st.cache_data(ttl=60)
 def load_market_data(vs_currency: str):
     data = cg.get_coins_markets(
-        vs_currency=vs_currency,
-        order='market_cap_desc',
-        per_page=250,
-        sparkline=True,
-        price_change_percentage='24h,7d,30d'
+        vs_currency=vs_currency, order='market_cap_desc', per_page=250,
+        sparkline=True, price_change_percentage='24h,7d,30d'
     )
     df = pd.DataFrame(data)
     df['24h %'] = df['price_change_percentage_24h_in_currency'].fillna(0)
@@ -151,24 +148,24 @@ with st.sidebar:
     refresh_interval = st.slider('Refresh Interval (s)', 10,300,60)
 
 # ========================
-# LOAD & FILTER DATA
+# LOAD DATA & STATE
 # ========================
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
+if 'selected_coin_id' not in st.session_state:
+    st.session_state.selected_coin_id = None
 
 df = load_market_data(currency)
 
-# apply search filter
+# Prepare overview_df for table only
 if st.session_state.search_term:
     mask = (
         df['name'].str.contains(st.session_state.search_term, case=False, na=False) |
         df['Symbol'].str.contains(st.session_state.search_term, case=False, na=False)
     )
-    df = df[mask]
-
-# maintain selected_coin state
-if 'selected_coin_id' not in st.session_state:
-    st.session_state.selected_coin_id = None
+    overview_df = df[mask]
+else:
+    overview_df = df
 
 # ========================
 # DISPLAY FUNCTIONS
@@ -176,7 +173,7 @@ if 'selected_coin_id' not in st.session_state:
 def display_market_movers(df_mov, title, icon, pct_col):
     st.markdown(f"**{icon} {title}**")
     for _, r in df_mov.iterrows():
-        ch, clr = r[pct_col], ('#4CAF50' if r[pct_col]>=0 else '#F44336')
+        ch, clr = r[pct_col], '#4CAF50' if r[pct_col]>=0 else '#F44336'
         st.markdown(
             f"<div style='display:flex;align-items:center'>"
             f"<img src='{r['Logo']}' width='24'><span style='margin-left:8px'>{r['name']}</span>"
@@ -184,115 +181,117 @@ def display_market_movers(df_mov, title, icon, pct_col):
             unsafe_allow_html=True
         )
 
-def display_market_overview(df_overview):
-    if df_overview.empty:
-        st.warning("No coins match your search.")
-        return
-
-    st.subheader("Key Metrics")
-    bcol, ecol, tcol = st.columns(3)
-
-    # BTC
-    btc_row = df_overview[df_overview['Symbol']=='BTC']
-    if not btc_row.empty:
-        btc = btc_row.iloc[0]
-        bcol.metric("BTC", f"{btc['current_price']:.2f}", f"{btc['24h %']:.2f}%")
-    else:
-        bcol.metric("BTC", "N/A", "—")
-
-    # ETH
-    eth_row = df_overview[df_overview['Symbol']=='ETH']
-    if not eth_row.empty:
-        eth = eth_row.iloc[0]
-        ecol.metric("ETH", f"{eth['current_price']:.2f}", f"{eth['24h %']:.2f}%")
-    else:
-        ecol.metric("ETH", "N/A", "—")
-
-    # Top Gainer
-    top = df_overview.loc[df_overview['24h %'].idxmax()]
-    tcol.metric("Top 24h Gainer", f"{top['name']} ({top['24h %']:.2f}%)")
-    st.markdown("---")
-
-    # Movers
-    pc = {'24h':'24h %','7d':'7d %','30d':'30d %'}[timeframe]
-    gc, lc = st.columns(2)
-    with gc: display_market_movers(df_overview.nlargest(10, pc), "🚀 Gainers", "🚀", pc)
-    with lc: display_market_movers(df_overview.nsmallest(10, pc), "📉 Losers", "📉", pc)
-    st.markdown("---")
-
-    # Overview table
-    st.subheader("Market Overview")
-    tbl = df_overview.head(50)
-    headers = ["#","Coin","Price","24h %","Market Cap","7d Sparkline"]
-    widths  = [0.5,2,1,1,1.5,2.5]
-    cols = st.columns(widths)
-    for col, h in zip(cols, headers):
-        col.write(f"**{h}**")
-    for _, r in tbl.iterrows():
-        c0, c1, c2, c3, c4, c5 = st.columns(widths)
-        c0.write(r['market_cap_rank'])
-        if c1.button(f"{r['name']} ({r['Symbol']})", key=r['id']):
-            st.session_state.selected_coin_id = r['id']
-            st.rerun()
-        c2.write(f"{r['current_price']:.4f}")
-        clr = '#4CAF50' if r['24h %']>=0 else '#F44336'
-        c3.markdown(f"<span style='color:{clr}'>{r['24h %']:+.2f}%</span>", unsafe_allow_html=True)
-        c4.write(f"${r['market_cap']:,}")
-        if r['7d Sparkline']:
-            c5.markdown(f"<img src='{r['7d Sparkline']}'>", unsafe_allow_html=True)
-
-def display_coin_details():
-    sel = df[df['id']==st.session_state.selected_coin_id]
-    if sel.empty:
-        st.warning("Coin not available. Returning…")
-        st.session_state.selected_coin_id = None
-        st.rerun()
-    coin = sel.iloc[0]
-    st.subheader(f"{coin['name']} ({coin['Symbol']})")
-    if st.button("⬅️ Back"):
-        st.session_state.selected_coin_id = None
-        st.rerun()
-
-    chart_type = st.selectbox("Chart Type", ["Line","Candlestick","OHLC"])
-    days = st.slider("History (days)", 7, 90, 30)
-
-    if chart_type == "Line":
-        hist = get_historical_data(coin['id'], currency, days)
-        fig = px.line(hist, x='date', y='price',
-                      title=f"{coin['name']} Price (Last {days}d)",
-                      labels={'price':f"Price ({currency.upper()})",'date':'Date'})
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        ohlc = get_ohlc_data(coin['id'], currency, days)
-        if chart_type == "Candlestick":
-            fig = go.Figure([go.Candlestick(
-                x=ohlc['date'], open=ohlc['open'],
-                high=ohlc['high'], low=ohlc['low'],
-                close=ohlc['close']
-            )])
-        else:
-            fig = go.Figure([go.Ohlc(
-                x=ohlc['date'], open=ohlc['open'],
-                high=ohlc['high'], low=ohlc['low'],
-                close=ohlc['close']
-            )])
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig, use_container_width=True)
-
 # ========================
-# RENDER MAIN
+# RENDER MAIN VIEW
 # ========================
 if df.empty:
     st.warning("Unable to load data.")
 else:
     if st.session_state.selected_coin_id:
-        display_coin_details()
+        # DETAIL VIEW
+        sel = df[df['id']==st.session_state.selected_coin_id]
+        if sel.empty:
+            st.warning("Coin not available. Returning…")
+            st.session_state.selected_coin_id = None
+            st.experimental_rerun()
+        coin = sel.iloc[0]
+        st.subheader(f"{coin['name']} ({coin['Symbol']})")
+        if st.button("⬅️ Back"):
+            st.session_state.selected_coin_id = None
+            st.experimental_rerun()
+
+        chart_type = st.selectbox("Chart Type", ["Line","Candlestick","OHLC"])
+        days = st.slider("History (days)", 7, 90, 30)
+
+        if chart_type == "Line":
+            hist = get_historical_data(coin['id'], currency, days)
+            fig = px.line(hist, x='date', y='price',
+                          title=f"{coin['name']} Price (Last {days}d)",
+                          labels={'price':f"Price ({currency.upper()})",'date':'Date'})
+            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            ohlc = get_ohlc_data(coin['id'], currency, days)
+            if chart_type == "Candlestick":
+                fig = go.Figure([go.Candlestick(
+                    x=ohlc['date'], open=ohlc['open'],
+                    high=ohlc['high'], low=ohlc['low'],
+                    close=ohlc['close']
+                )])
+            else:
+                fig = go.Figure([go.Ohlc(
+                    x=ohlc['date'], open=ohlc['open'],
+                    high=ohlc['high'], low=ohlc['low'],
+                    close=ohlc['close']
+                )])
+            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Coin metrics
+        st.subheader("Info & Metrics")
+        c1, c2 = st.columns(2)
+        c1.metric("Price", f"{coin['current_price']:,.4f} {currency.upper()}", f"{coin['24h %']:.2f}%")
+        c2.metric("Market Cap", f"${coin['market_cap']:,}")
+        c1.metric("24h Vol", f"${coin['total_volume']:,}")
+        c2.metric("Rank", f"#{coin['market_cap_rank']}")
     else:
-        display_market_overview(df)
+        # OVERVIEW: Key Metrics using full df
+        st.subheader("Key Metrics")
+        b, e, t = st.columns(3)
+        # BTC
+        btc_row = df[df['Symbol']=='BTC']
+        if not btc_row.empty:
+            btc = btc_row.iloc[0]
+            b.metric("BTC", f"{btc['current_price']:.2f}", f"{btc['24h %']:.2f}%")
+        else:
+            b.metric("BTC", "N/A", "—")
+        # ETH
+        eth_row = df[df['Symbol']=='ETH']
+        if not eth_row.empty:
+            eth = eth_row.iloc[0]
+            e.metric("ETH", f"{eth['current_price']:.2f}", f"{eth['24h %']:.2f}%")
+        else:
+            e.metric("ETH", "N/A", "—")
+        # Top Gainer
+        top = df.loc[df['24h %'].idxmax()]
+        t.metric("Top 24h Gainer", f"{top['name']} ({top['24h %']:.2f}%)")
+        st.markdown("---")
+
+        # TOP MOVERS using full df
+        pc = {'24h':'24h %','7d':'7d %','30d':'30d %'}[timeframe]
+        gc, lc = st.columns(2)
+        with gc:
+            display_market_movers(df.nlargest(10, pc), "🚀 Gainers", "🚀", pc)
+        with lc:
+            display_market_movers(df.nsmallest(10, pc), "📉 Losers", "📉", pc)
+        st.markdown("---")
+
+        # MARKET OVERVIEW table using overview_df
+        st.subheader("Market Overview")
+        if overview_df.empty:
+            st.warning("No coins match your search.")
+        else:
+            tbl = overview_df.head(50)
+            headers = ["#","Coin","Price","24h %","Market Cap","7d Sparkline"]
+            widths  = [0.5,2,1,1,1.5,2.5]
+            cols = st.columns(widths)
+            for col, h in zip(cols, headers):
+                col.write(f"**{h}**")
+            for _, r in tbl.iterrows():
+                c0, c1, c2, c3, c4, c5 = st.columns(widths)
+                c0.write(r['market_cap_rank'])
+                if c1.button(f"{r['name']} ({r['Symbol']})", key=r['id']):
+                    st.session_state.selected_coin_id = r['id']
+                    st.experimental_rerun()
+                c2.write(f"{r['current_price']:.4f}")
+                clr = '#4CAF50' if r['24h %']>=0 else '#F44336'
+                c3.markdown(f"<span style='color:{clr}'>{r['24h %']:+.2f}%</span>", unsafe_allow_html=True)
+                c4.write(f"${r['market_cap']:,}")
+                if r['7d Sparkline']:
+                    c5.markdown(f"<img src='{r['7d Sparkline']}'>", unsafe_allow_html=True)
 
 # ========================
-# PRICE ALERTS & AUTO-REFRESH
+# PRICE ALERTS (sidebar) & AUTO-REFRESH
 # ========================
 with st.sidebar:
     st.header("🔔 Alerts")
@@ -309,4 +308,4 @@ with st.sidebar:
 
 if time.time() - st.session_state.last_refresh > refresh_interval:
     st.session_state.last_refresh = time.time()
-    st.rerun()
+    st.experimental_rerun()
