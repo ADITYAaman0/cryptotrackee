@@ -73,6 +73,22 @@ st.markdown("""
     border-color: #D32F2F;
 }
 
+/* Custom styling for chart info metrics */
+.chart-info-metric {
+    font-size: 1.1rem;
+    color: #E0E0E0;
+    margin-right: 15px;
+    display: inline-block;
+}
+.chart-info-value {
+    font-weight: bold;
+}
+.change-positive {
+    color: #4CAF50;
+}
+.change-negative {
+    color: #F44336;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -166,8 +182,25 @@ def get_historical_data(coin_id: str, vs_currency: str, days: int = 30):
 
 @st.cache_data(ttl=3600)
 def get_ohlc_data(coin_id: str, vs_currency: str, days: int = 30):
+    # CoinGecko's OHLC API for 'days' parameter:
+    # 1: 1 day data (1 min interval)
+    # 7: 7 days data (hourly)
+    # 14: 14 days data (hourly)
+    # 30: 30 days data (daily)
+    # 90: 90 days data (daily)
+    # 180: 180 days data (daily)
+    # 365: 365 days data (daily)
+    # max: Max data (daily) - max for this endpoint is usually 365 days for detailed data
+    
+    # Map common timeframes to CoinGecko's 'days' parameter
+    coingecko_days_map = {
+        '1D': 1, '7D': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'MAX': 365 # Capping MAX at 365 for daily OHLC
+    }
+    
+    actual_days_param = coingecko_days_map.get(days, 30) # Default to 30 days if 'days' input is not in map
+
     try:
-        data_ohlc = cg.get_coin_ohlc_by_id(id=coin_id, vs_currency=vs_currency, days=days)
+        data_ohlc = cg.get_coin_ohlc_by_id(id=coin_id, vs_currency=vs_currency, days=actual_days_param)
         if not data_ohlc: return pd.DataFrame()
         df_ohlc = pd.DataFrame(data_ohlc, columns=['timestamp','open','high','low','close'])
         df_ohlc['date'] = pd.to_datetime(df_ohlc['timestamp'], unit='ms')
@@ -262,10 +295,29 @@ def render_coins_table(data_df_to_render, currency_symbol_for_table):
         button_key_render = f"select_TABLE_{coin_id_tbl_render}_{index}"  
         coin_label_render = f"{coin_name_tbl_render} ({coin_symbol_tbl_render})"
 
-        if row_cols[1].button(coin_label_render, key=button_key_render, help=f"View details for {coin_name_tbl_render}"):
-            st.session_state.selected_coin_id = coin_id_tbl_render  
-            st.session_state.search_query = "" # Clear search when navigating to detail view
-            st.rerun()
+        # Using a small image for the logo next to the button
+        logo_url_render = r_row_table.get('Logo', '')
+        if logo_url_render:
+            row_cols[1].markdown(
+                f"<div style='display:flex; align-items:center;'>"
+                f"<img src='{logo_url_render}' width='20' height='20' style='margin-right:5px; vertical-align:middle;'>"
+                f"<button style='background:none; border:none; padding:0; cursor:pointer; color:inherit; font-size:inherit; text-align:left;' key='{button_key_render}' "
+                f"onclick=\"document.getElementById('select_TABLE_{coin_id_tbl_render}_{index}').click();\">"
+                f"{coin_label_render}"
+                f"</button>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+            # A hidden button to trigger the session state change, as direct JS calls from markdown are limited
+            if row_cols[1].button(" ", key=button_key_render + "_hidden", help=f"View details for {coin_name_tbl_render}", use_container_width=True):
+                st.session_state.selected_coin_id = coin_id_tbl_render  
+                st.session_state.search_query = "" # Clear search when navigating to detail view
+                st.rerun()
+        else:
+            if row_cols[1].button(coin_label_render, key=button_key_render, help=f"View details for {coin_name_tbl_render}"):
+                st.session_state.selected_coin_id = coin_id_tbl_render  
+                st.session_state.search_query = "" # Clear search when navigating to detail view
+                st.rerun()
             
         current_price_val_row_render = r_row_table.get('current_price', 0.0); current_price_val_row_render = current_price_val_row_render if pd.notnull(current_price_val_row_render) else 0.0
         row_cols[2].write(f"{current_price_val_row_render:,.4f}")
@@ -306,61 +358,166 @@ def display_coin_details():
     coin_name_detail = coin.get('name', 'N/A')
     coin_symbol_detail = coin.get('Symbol', 'N/A')
     coin_id_detail = coin.get('id', 'unknown')
+    coin_logo_detail = coin.get('Logo', '')
 
-    st.subheader(f"{coin_name_detail} ({coin_symbol_detail})")
-    if st.button("⬅️ Back to Overview", key=f"back_button_{coin_id_detail}"):  
-        st.session_state.selected_coin_id=None
-        st.session_state.search_query = "" # Clear search when going back from detail
-        st.rerun()
 
-    chart_type = st.selectbox("Chart Type", ["Line","Candlestick","OHLC"], key=f"chart_type_{coin_id_detail}")
-    days = st.slider("History (days)", min_value=1, max_value=365, value=30, key=f"days_{coin_id_detail}")
+    # Top bar for coin name, symbol, logo, and metrics
+    top_chart_cols = st.columns([0.1, 1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.5])
+    with top_chart_cols[0]:
+        if coin_logo_detail:
+            st.image(coin_logo_detail, width=40)
+    with top_chart_cols[1]:
+        st.markdown(f"**<span style='font-size:1.5rem;'>{coin_name_detail}</span>** <span style='color:#AAA;'>{coin_symbol_detail.upper()}</span>", unsafe_allow_html=True)
+    
+    # Get latest OHLC data for display in the top bar
+    ohlc_for_metrics = get_ohlc_data(coin_id_detail, currency, days=1) # Get 1 day data for latest OHLC
+    latest_price_info = ohlc_for_metrics.iloc[-1] if not ohlc_for_metrics.empty else {}
+    
+    current_price_val = coin.get('current_price', 0.0)
+    change_24h_val = coin.get('24h %', 0.0)
+    change_color_class = "change-positive" if change_24h_val >= 0 else "change-negative"
 
+    top_chart_cols[2].markdown(f"<span class='chart-info-metric'>Price: <span class='chart-info-value'>{current_price_val:,.4f} {currency.upper()}</span></span>", unsafe_allow_html=True)
+    top_chart_cols[3].markdown(f"<span class='chart-info-metric'>24h %: <span class='chart-info-value {change_color_class}'>{change_24h_val:+.2f}%</span></span>", unsafe_allow_html=True)
+
+    if not ohlc_for_metrics.empty:
+        top_chart_cols[4].markdown(f"<span class='chart-info-metric'>O: <span class='chart-info-value'>{latest_price_info.get('open',0.0):,.4f}</span></span>", unsafe_allow_html=True)
+        top_chart_cols[5].markdown(f"<span class='chart-info-metric'>H: <span class='chart-info-value'>{latest_price_info.get('high',0.0):,.4f}</span></span>", unsafe_allow_html=True)
+        top_chart_cols[6].markdown(f"<span class='chart-info-metric'>L: <span class='chart-info-value'>{latest_price_info.get('low',0.0):,.4f}</span></span>", unsafe_allow_html=True)
+        top_chart_cols[7].markdown(f"<span class='chart-info-metric'>C: <span class='chart-info-value'>{latest_price_info.get('close',0.0):,.4f}</span></span>", unsafe_allow_html=True)
+
+    st.markdown("---") # Separator below the top info bar
+
+    # Back button and timeframe selector
+    chart_controls_cols = st.columns([0.5, 3, 1])
+    with chart_controls_cols[0]:
+        if st.button("⬅️ Back to Overview", key=f"back_button_{coin_id_detail}"):  
+            st.session_state.selected_coin_id=None
+            st.session_state.search_query = "" # Clear search when going back from detail
+            st.rerun()
+    
+    with chart_controls_cols[1]:
+        # Replacing slider with radio buttons for specific timeframes
+        timeframe_options = ['1D', '7D', '1M', '3M', '6M', '1Y', 'MAX']
+        selected_timeframe = st.radio(
+            "Select Timeframe",
+            options=timeframe_options,
+            index=timeframe_options.index('1M'), # Default to 1 Month
+            horizontal=True,
+            key=f"chart_timeframe_{coin_id_detail}"
+        )
+        # Map selected_timeframe to days parameter for CoinGecko API
+        days_to_fetch = {
+            '1D': 1, '7D': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'MAX': 365
+        }.get(selected_timeframe, 30) # Default to 30 if something goes wrong
+
+    with chart_controls_cols[2]:
+        chart_type = st.selectbox("Chart Type", ["Candlestick","Line","OHLC"], index=0, key=f"chart_type_{coin_id_detail}") # Default to Candlestick
+
+    # Chart rendering
     fig_data_loaded = False
-    if chart_type == "Line":
-        hist = get_historical_data(coin_id_detail, currency, days)
-        if not hist.empty and 'price' in hist.columns and not hist['price'].isna().all():
-            fig = px.line(hist, x='date', y='price', title=f"{coin_name_detail} Price (Last {days}d)",
-                          labels={'price':f'Price ({currency.upper()})','date':'Date'})
-            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="#FFFFFF", title_font_color="#FFFFFF")
-            fig.update_xaxes(showgrid=False, color="#FFFFFF")
-            fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color="#FFFFFF")
-            st.plotly_chart(fig, use_container_width=True)
-            fig_data_loaded = True
-    else:  
-        ohlc = get_ohlc_data(coin_id_detail, currency, days)
+    if chart_type in ["Candlestick", "OHLC"]:
+        ohlc = get_ohlc_data(coin_id_detail, currency, days=days_to_fetch)
         if not ohlc.empty and all(col in ohlc.columns for col in ['open', 'high', 'low', 'close']):
             if chart_type == "Candlestick":
                 fig = go.Figure(data=[
-                    go.Candlestick(x=ohlc['date'], open=ohlc['open'], high=ohlc['high'], low=ohlc['low'], close=ohlc['close'])
+                    go.Candlestick(
+                        x=ohlc['date'], 
+                        open=ohlc['open'], 
+                        high=ohlc['high'], 
+                        low=ohlc['low'], 
+                        close=ohlc['close'],
+                        increasing_line_color='#4CAF50', # Green for increasing
+                        decreasing_line_color='#F44336' # Red for decreasing
+                    )
                 ])
             else: # OHLC
                 fig = go.Figure(data=[
-                    go.Ohlc(x=ohlc['date'], open=ohlc['open'], high=ohlc['high'], low=ohlc['low'], close=ohlc['close'])
+                    go.Ohlc(
+                        x=ohlc['date'], 
+                        open=ohlc['open'], 
+                        high=ohlc['high'], 
+                        low=ohlc['low'], 
+                        close=ohlc['close'],
+                        increasing_line_color='#4CAF50', # Green for increasing
+                        decreasing_line_color='#F44336' # Red for decreasing
+                    )
                 ])
-            fig.update_layout(title=f"{coin_name_detail} {chart_type} Chart (Last {days}d)",
-                              xaxis_rangeslider_visible=False,
-                              paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="#FFFFFF", title_font_color="#FFFFFF")
-            fig.update_xaxes(showgrid=False, color="#FFFFFF")
-            fig.update_yaxes(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color="#FFFFFF")
+            
+            fig.update_layout(
+                title={
+                    'text': f"{coin_name_detail} {chart_type} Chart (Last {selected_timeframe})",
+                    'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top'
+                },
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)', 
+                font_color="#E0E0E0", # Light grey font color
+                title_font_color="#FFFFFF",
+                xaxis=dict(
+                    showgrid=False, 
+                    color="#E0E0E0", # X-axis labels color
+                    linecolor="#444", # X-axis line color
+                    gridcolor='rgba(128,128,128,0.1)' # Lighter grid lines
+                ),
+                yaxis=dict(
+                    showgrid=True, 
+                    gridcolor='rgba(128,128,128,0.1)', # Lighter grid lines
+                    color="#E0E0E0", # Y-axis labels color
+                    linecolor="#444", # Y-axis line color
+                    side='right' # Y-axis on the right
+                ),
+                hovermode="x unified" # Enable unified hover for better data display on hover
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            fig_data_loaded = True
+    elif chart_type == "Line":
+        hist = get_historical_data(coin_id_detail, currency, days=days_to_fetch)
+        if not hist.empty and 'price' in hist.columns and not hist['price'].isna().all():
+            fig = px.line(hist, x='date', y='price', title=f"{coin_name_detail} Price (Last {selected_timeframe})",
+                          labels={'price':f'Price ({currency.upper()})','date':'Date'})
+            fig.update_layout(
+                title={
+                    'text': f"{coin_name_detail} Price (Last {selected_timeframe})",
+                    'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top'
+                },
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)', 
+                font_color="#E0E0E0", 
+                title_font_color="#FFFFFF",
+                xaxis=dict(
+                    showgrid=False, 
+                    color="#E0E0E0", 
+                    linecolor="#444",
+                    gridcolor='rgba(128,128,128,0.1)'
+                ),
+                yaxis=dict(
+                    showgrid=True, 
+                    gridcolor='rgba(128,128,128,0.1)', 
+                    color="#E0E0E0",
+                    linecolor="#444",
+                    side='right'
+                ),
+                hovermode="x unified"
+            )
             st.plotly_chart(fig, use_container_width=True)
             fig_data_loaded = True
             
     if not fig_data_loaded:
         st.info(f"No chart data to display for {coin_name_detail} for the selected period or type.")
 
+    st.markdown("---") # Separator below the chart
+
     st.subheader("Info & Metrics")
     c1_detail, c2_detail = st.columns(2)
     
-    current_price_val = coin.get('current_price', 0.0); current_price_val = current_price_val if pd.notnull(current_price_val) else 0.0
-    change_24h_val = coin.get('24h %', 0.0); change_24h_val = change_24h_val if pd.notnull(change_24h_val) else 0.0
     market_cap_val = coin.get('market_cap', 0); market_cap_val = market_cap_val if pd.notnull(market_cap_val) else 0
     total_volume_val = coin.get('total_volume', 0); total_volume_val = total_volume_val if pd.notnull(total_volume_val) else 0
     
-    c1_detail.metric("Price", f"{current_price_val:,.4f} {currency.upper()}", f"{change_24h_val:.2f}%")
-    c2_detail.metric("Market Cap", f"${market_cap_val:,}" if currency.lower() == 'usd' else f"{market_cap_val:,} {currency.upper()}")
-    c1_detail.metric("24h Vol", f"${total_volume_val:,}" if currency.lower() == 'usd' else f"{total_volume_val:,} {currency.upper()}")
-    c2_detail.metric("Rank", f"#{coin.get('market_cap_rank', 'N/A')}")
+    c1_detail.metric("Market Cap", f"${market_cap_val:,}" if currency.lower() == 'usd' else f"{market_cap_val:,} {currency.upper()}")
+    c2_detail.metric("24h Vol", f"${total_volume_val:,}" if currency.lower() == 'usd' else f"{total_volume_val:,} {currency.upper()}")
+    c1_detail.metric("Rank", f"#{coin.get('market_cap_rank', 'N/A')}")
+    # Removed redundant price and 24h change metrics as they are now in the top bar.
 
 # ========================
 # MARKET OVERVIEW (Main Display Logic with Search)
