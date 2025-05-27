@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from pycoingecko import CoinGeckoAPI
+import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import time
@@ -33,218 +34,377 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;700&family=Orbitron:wght@500&display=swap');
 
-.central-header {
-    font-family: 'Orbitron', sans-serif;
-    font-size:3.5rem; 
-    text-align:center; 
-    background: linear-gradient(45deg, #4CAF50, #2196F3);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom:20px;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+.central-header {font-family:'Orbitron'; font-size:3.5rem; text-align:center; background:linear-gradient(45deg,#4CAF50,#2196F3); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:20px; text-shadow:2px 2px 4px rgba(0,0,0,0.3);}
+.stMetric {background:#262730;border-radius:12px;padding:20px;border:1px solid #4CAF50;box-shadow:0 4px 8px rgba(76,175,80,0.2);}
+.mover-header {font-family:'Kanit';font-size:1.5rem;color:#FFF;padding-bottom:10px;border-bottom:2px solid #4CAF50;}
+.mover-row {display:flex;align-items:center;margin-bottom:8px;}
+.mover-name {font-family:'Kanit';font-weight:bold;margin-left:10px;color:#FFF;}
+/* Search bar */
+.stTextInput > div > div > input {
+    border-radius:25px;border:2px solid #4CAF50;padding:10px 15px;box-shadow:0 4px 8px rgba(0,0,0,0.2);transition:0.3s;color:#E0E0E0;background:#1A1A1A;
 }
-
-/* … your other CSS … */
-
+.stTextInput > div > div > input:focus {border-color:#2196F3;box-shadow:0 4px 12px rgba(33,150,243,0.3);}
+.stTextInput label {font-weight:bold;color:#E0E0E0;font-size:1.1rem;margin-bottom:5px;display:block;}
+/* Clear search button */
+.stButton > button {border-radius:8px;border:1px solid #F44336;background:#F44336;color:#FFF;padding:8px 15px;font-weight:bold;transition:0.2s;}
+.stButton > button:hover {background:#D32F2F;border-color:#D32F2F;}
+/* Chart metrics */
+.chart-info-metric {font-size:1.1rem;color:#E0E0E0;margin-right:15px;display:inline-block;}
+.chart-info-value {font-weight:bold;}
+.change-positive {color:#4CAF50;}
+.change-negative {color:#F44336;}
 </style>
 """, unsafe_allow_html=True)
 
+# Header Lottie + Title
+with st.container():
+    c1, c2, c3 = st.columns([1,3,1])
+    with c2:
+        anim = load_lottie("https://lottie.host/7905f328-9844-41d3-83f2-6962a1e67c9c/uB9iS90Y9K.json")
+        if anim: st_lottie(anim, height=200)
+        st.markdown("<div class='central-header'>CRYPTO TRACKEE</div>", unsafe_allow_html=True)
+    st.markdown("---")
+
 # ========================
-# FORMATTERS
+# FORMAT HELPERS
 # ========================
 def abbreviate_number(num: float) -> str:
-    """Turn 1_234_567 into '1.23M', etc."""
-    for unit in ['', 'K', 'M', 'B', 'T', 'P']:
-        if abs(num) < 1000.0:
+    for unit in ['', 'K', 'M', 'B', 'T']:
+        if abs(num) < 1000:
             return f"{num:.2f}{unit}"
-        num /= 1000.0
+        num /= 1000
     return f"{num:.2f}E"
 
 def format_currency(num: float, currency: str) -> str:
-    """Format a raw number either as $1.23M (USD) or '1.23M EUR'."""
     abbr = abbreviate_number(num)
     if currency.lower() == 'usd':
         return f"${abbr}"
     return f"{abbr} {currency.upper()}"
 
 # ========================
-# WATCHLIST FUNCTIONALITY
+# WATCHLIST
 # ========================
 def init_watchlist():
     if 'watchlist' not in st.session_state:
         st.session_state.watchlist = []
 
-def toggle_watchlist(coin_id):
+def toggle_watchlist(cid):
     wl = st.session_state.watchlist
-    if coin_id in wl:
-        wl.remove(coin_id)
-    else:
-        wl.append(coin_id)
+    if cid in wl: wl.remove(cid)
+    else: wl.append(cid)
 
-def display_watchlist(df, currency):
+def display_watchlist(df, cur):
     st.sidebar.markdown("---")
     st.sidebar.subheader("⭐ Your Watchlist")
     if not st.session_state.watchlist:
-        st.sidebar.info("Add coins to your watchlist using the star button ★")
+        st.sidebar.info("Add coins to your watchlist ★")
         return
-
-    watch_df = df[df['id'].isin(st.session_state.watchlist)]
-    for _, coin in watch_df.iterrows():
+    wl_df = df[df['id'].isin(st.session_state.watchlist)]
+    for _, r in wl_df.iterrows():
         c1, c2 = st.sidebar.columns([1,4])
-        with c1:
-            st.image(coin['Logo'], width=40)
-        with c2:
-            pct = coin['24h %']
-            clr = '#4CAF50' if pct>=0 else '#F44336'
-            st.markdown(f"""
-                <div class="watchlist-item">
-                  <strong style="color:#FFF;">{coin['name']}</strong><br>
-                  <span style="color:#CCC;">{coin['current_price']:,.4f} {currency.upper()}</span>
-                  <span style="color:{clr}; margin-left:10px;">{pct:+.2f}%</span>
-                </div>
-            """, unsafe_allow_html=True)
+        with c1: st.image(r['Logo'], width=40)
+        pct = r['24h %']; clr = '#4CAF50' if pct>=0 else '#F44336'
+        c2.markdown(f"""
+            <div style='padding:8px;background:rgba(76,175,80,0.15);border-radius:8px;'>
+              <strong style='color:#FFF;'>{r['name']}</strong><br>
+              <span style='color:#CCC;'>{r['current_price']:,.4f} {cur.upper()}</span>
+              <span style='color:{clr};margin-left:8px;'>{pct:+.2f}%</span>
+            </div>
+        """, unsafe_allow_html=True)
 
 # ========================
-# DATA & HELPERS
+# DATA FETCHING
 # ========================
 @st.cache_resource
-def get_coingecko_client():
+def get_client():
     return CoinGeckoAPI()
 
-cg = get_coingecko_client()
+cg = get_client()
 
 def create_sparkline(data):
-    if not isinstance(data, list) or len(data)<2:
-        return ""
-    series = pd.to_numeric(pd.Series(data), errors='coerce').dropna().tolist()
-    if len(series)<2:
-        return ""
-    fig = go.Figure(go.Scatter(
-        x=list(range(len(series))),
-        y=series,
-        mode='lines',
-        line=dict(color='#4CAF50' if series[-1]>=series[0] else '#F44336', width=2)
-    ))
-    fig.update_layout(
-        showlegend=False,
-        xaxis_visible=False, yaxis_visible=False,
-        margin=dict(t=0,b=0,l=0,r=0),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        width=150, height=50
-    )
-    buf = BytesIO()
-    fig.write_image(buf, format='png', engine='kaleido')
+    if not isinstance(data, list) or len(data)<2: return ""
+    s = pd.to_numeric(pd.Series(data), errors='coerce').dropna().tolist()
+    if len(s)<2: return ""
+    fig = go.Figure(go.Scatter(x=list(range(len(s))), y=s, mode='lines',
+        line=dict(color='#4CAF50' if s[-1]>=s[0] else '#F44336', width=2)))
+    fig.update_layout(showlegend=False, xaxis_visible=False, yaxis_visible=False,
+                      margin=dict(t=0,b=0,l=0,r=0), paper_bgcolor='rgba(0,0,0,0)',
+                      plot_bgcolor='rgba(0,0,0,0)', width=150, height=50)
+    buf=BytesIO(); fig.write_image(buf, format='png', engine='kaleido')
     return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
 
 @st.cache_data(ttl=30)
 def load_market_data(vs_currency: str) -> pd.DataFrame:
     try:
-        data = cg.get_coins_markets(
-            vs_currency=vs_currency,
-            order='market_cap_desc',
-            per_page=250,
-            sparkline=True,
-            price_change_percentage='24h,7d,30d'
-        )
+        data = cg.get_coins_markets(vs_currency=vs_currency,
+                                    order='market_cap_desc',
+                                    per_page=250,
+                                    sparkline=True,
+                                    price_change_percentage='24h,7d,30d')
         df = pd.DataFrame(data)
-        # compute the % columns
-        df['24h %']  = pd.to_numeric(df.get('price_change_percentage_24h_in_currency'), errors='coerce').fillna(0.0)
-        df['7d %']   = pd.to_numeric(df.get('price_change_percentage_7d_in_currency'), errors='coerce').fillna(0.0)
-        df['30d %']  = pd.to_numeric(df.get('price_change_percentage_30d_in_currency'), errors='coerce').fillna(0.0)
-        df['Symbol'] = df['symbol'].str.upper()
-        df['Logo']   = df['image']
-        df['current_price'] = pd.to_numeric(df['current_price'], errors='coerce').fillna(0.0)
+        df['24h %'] = pd.to_numeric(df.get('price_change_percentage_24h_in_currency'), errors='coerce').fillna(0)
+        df['7d %']  = pd.to_numeric(df.get('price_change_percentage_7d_in_currency'), errors='coerce').fillna(0)
+        df['30d %'] = pd.to_numeric(df.get('price_change_percentage_30d_in_currency'), errors='coerce').fillna(0)
+        df['Symbol']= df['symbol'].str.upper()
+        df['Logo']  = df['image']
+        df['current_price'] = pd.to_numeric(df['current_price'], errors='coerce').fillna(0)
         df['market_cap']     = pd.to_numeric(df['market_cap'], errors='coerce').fillna(0)
+        df['total_volume']   = pd.to_numeric(df['total_volume'], errors='coerce').fillna(0)
         df['market_cap_rank']= pd.to_numeric(df['market_cap_rank'], errors='coerce').fillna(0).astype(int)
-        # sparkline
-        df['7d Sparkline'] = df['sparkline_in_7d'].apply(
-            lambda s: create_sparkline(s['price']) if isinstance(s, dict) and 'price' in s else ""
-        )
+        df['7d Sparkline'] = df['sparkline_in_7d'].apply(lambda x: create_sparkline(x['price']) if isinstance(x,dict) else "")
         return df
     except Exception as e:
-        st.error(f"Error fetching market data: {e}")
+        st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
-# (You can add your get_historical_data, get_raw_ohlc_data, resample_ohlc_data here…)
+@st.cache_data(ttl=3600)
+def get_historical_data(cid, vs_currency, days=30):
+    try:
+        chart = cg.get_coin_market_chart_by_id(id=cid, vs_currency=vs_currency, days=days)
+        df = pd.DataFrame(chart.get('prices',[]), columns=['timestamp','price'])
+        df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
+        return df[['date','price']].dropna()
+    except:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def get_raw_ohlc_data(cid, vs_currency, days):
+    try:
+        arr = cg.get_coin_ohlc_by_id(id=cid, vs_currency=vs_currency, days=days)
+        df = pd.DataFrame(arr, columns=['timestamp','open','high','low','close'])
+        df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
+        for c in ['open','high','low','close']:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
+        return df[['date','open','high','low','close']].dropna()
+    except:
+        return pd.DataFrame()
+
+def resample_ohlc(df1, interval):
+    if df1.empty: return df1
+    df2 = df1.set_index('date').resample(interval).apply({
+        'open':'first','high':'max','low':'min','close':'last'
+    }).dropna().reset_index()
+    return df2
 
 # ========================
-# SIDEBAR
+# SIDEBAR SETTINGS
 # ========================
 with st.sidebar:
     st.image("https://assets.coingecko.com/coins/images/1/large/bitcoin.png", width=100)
     st.header("⚙️ Settings")
     try:
         cur_list = cg.get_supported_vs_currencies()
-        supported = sorted(c.lower() for c in cur_list)
+        supported = sorted([c.lower() for c in cur_list])
         idx = supported.index('usd') if 'usd' in supported else 0
     except:
-        supported = ['usd']; idx = 0
-    currency = st.selectbox("Currency", supported, index=idx, key="currency_select")
+        supported = ['usd']; idx=0
+    currency = st.selectbox("Currency", supported, index=idx)
     timeframe = st.selectbox("Movers Timeframe", ['24h','7d','30d'], index=1)
-    refresh_interval = st.slider("Auto-Refresh (s)", 10, 300, 30)
+    refresh_interval = st.slider("Auto-Refresh Interval (s)", 10, 300, 30)
 
-# initialize & load
+# init session
 init_watchlist()
 if 'selected_coin_id' not in st.session_state:
     st.session_state.selected_coin_id = None
-if 'last_refresh' not in st.session_state:
-    st.session_state.last_refresh = time.time()
+if 'search_query' not in st.session_state:
+    st.session_state.search_query = ""
 
+# load data & watchlist
 df = load_market_data(currency)
 display_watchlist(df, currency)
 
 # ========================
-# MAIN TABLE RENDERING
+# MARKET OVERVIEW + SEARCH
 # ========================
-def render_coins_table(df_to_show: pd.DataFrame, curr: str):
-    if df_to_show.empty:
-        st.write("No data available.")
+def render_coins_table(df_show, cur):
+    if df_show.empty:
+        st.write("No coins to display.")
         return
-
-    specs = [0.3, 2.5, 1.5, 0.8, 1.8, 1.8, 0.5]
-    headers = ["#", "Coin", f"Price ({curr.upper()})", "24h %", "Market Cap", "7d Sparkline", "★"]
+    specs = [0.4,2.2,1.5,0.8,1.8,1.8,0.5]
+    headers = ["#","Coin",f"Price ({cur.upper()})","24h %","Market Cap","7d Sparkline","★"]
     cols = st.columns(specs)
-    for c, h in zip(cols, headers):
-        c.markdown(f"<div class='coin-table-header'>{h}</div>", unsafe_allow_html=True)
-
-    for idx, row in df_to_show.iterrows():
-        c0, c1, c2, c3, c4, c5, c6 = st.columns(specs)
-        coin_id = row['id']
-
-        # star toggle
+    for c,h in zip(cols, headers):
+        c.markdown(f"**{h}**")
+    for idx,r in df_show.iterrows():
+        c0,c1,c2,c3,c4,c5,c6 = st.columns(specs)
+        cid = r['id']
+        # watchlist star
         with c6:
-            icon = "★" if coin_id in st.session_state.watchlist else "☆"
-            if st.button(icon, key=f"star_{coin_id}_{idx}", help="Watchlist"):
-                toggle_watchlist(coin_id)
+            icon = "★" if cid in st.session_state.watchlist else "☆"
+            if st.button(icon, key=f"star_{cid}_{idx}"):
+                toggle_watchlist(cid)
                 st.experimental_rerun()
-
-        c0.write(row['market_cap_rank'])
-
-        # coin name + logo
-        with c1:
-            st.markdown(
-                f"<img src='{row['Logo']}' width=20 style='vertical-align:middle;'/> "
-                f"{row['name']} ({row['Symbol']})",
+        c0.write(r['market_cap_rank'])
+        # name + logo clickable
+        name = f"{r['name']} ({r['Symbol']})"
+        logo = r['Logo']
+        key_btn = f"btn_{cid}_{idx}"
+        if logo:
+            c1.markdown(
+                f"<img src='{logo}' width=20 style='vertical-align:middle;margin-right:5px;'/>"
+                f"<button style='background:none;border:none;color:#FFF;' onclick=\"document.getElementById('{key_btn}').click()\">{name}</button>",
                 unsafe_allow_html=True
             )
-
+            if c1.button(" ", key=key_btn, use_container_width=True):
+                st.session_state.selected_coin_id = cid
+                st.session_state.search_query = ""
+                st.experimental_rerun()
+        else:
+            if c1.button(name, key=key_btn):
+                st.session_state.selected_coin_id = cid
+                st.session_state.search_query = ""
+                st.experimental_rerun()
         # price
-        c2.write(f"{row['current_price']:,.4f}")
-
+        c2.write(f"{r['current_price']:,.4f}")
         # 24h %
-        pct = row['24h %']
-        color = '#4CAF50' if pct >= 0 else '#F44336'
-        c3.markdown(f"<span style='color:{color};'>{pct:+.2f}%</span>", unsafe_allow_html=True)
-
+        pct = r['24h %']; clr = '#4CAF50' if pct>=0 else '#F44336'
+        c3.markdown(f"<span style='color:{clr};font-weight:bold'>{pct:+.2f}%</span>", unsafe_allow_html=True)
         # market cap
-        c4.write(format_currency(row['market_cap'], curr))
-
+        c4.write(format_currency(r['market_cap'], cur))
         # sparkline
-        if row['7d Sparkline']:
-            c5.image(row['7d Sparkline'], use_column_width=True)
+        sp = r['7d Sparkline']
+        if sp:
+            c5.image(sp, use_column_width=True)
         else:
             c5.write("–")
+        st.markdown("<hr style='border-color:#333;margin:4px 0;'>", unsafe_allow_html=True)
 
-# finally render!
-render_coins_table(df, currency)
+def display_overview():
+    # search
+    q = st.text_input("🔍 Search Coins", value=st.session_state.search_query, placeholder="Name or symbol")
+    if q != st.session_state.search_query:
+        st.session_state.search_query = q
+        st.experimental_rerun()
+    if st.session_state.search_query.strip():
+        st.button("⬅️ Clear Search", on_click=lambda: st.session_state.update(search_query=""))
+        st.subheader(f"Results for «{st.session_state.search_query}»")
+        mask = (
+            df['name'].str.lower().str.contains(q.lower()) |
+            df['Symbol'].str.lower().str.contains(q.lower())
+        )
+        res = df[mask]
+        render_coins_table(res, currency)
+    else:
+        # Key Metrics
+        st.subheader("Key Metrics")
+        bcol, ecol, tcol = st.columns(3)
+        for sym, col in [('BTC',bcol),('ETH',ecol)]:
+            sel = df[df['Symbol']==sym]
+            if not sel.empty:
+                v = sel.iloc[0]['current_price']
+                c24 = sel.iloc[0]['24h %']
+                col.metric(f"{sym} Price", f"{v:,.2f} {currency.upper()}", f"{c24:+.2f}%")
+            else:
+                col.metric(f"{sym} Price", "N/A","N/A")
+        # Top Movers
+        movers = {
+            'Gainers 24h': ('24h %','🔥','desc'),
+            'Losers 24h': ('24h %','❄️','asc'),
+            'Gainers 7d':  ('7d %','🚀','desc'),
+            'Losers 7d':   ('7d %','🌧️','asc'),
+        }
+        for title,(colname,icon,order) in movers.items():
+            dfm = df.sort_values(colname, ascending=(order=='asc')).head(5)
+            display_display = lambda d= dfm, t=title, i=icon: None
+            st.markdown(f"<div class='mover-header'>{icon} {title}</div>", unsafe_allow_html=True)
+            for _,m in dfm.iterrows():
+                p = m[colname]; clr = '#4CAF50' if p>=0 else '#F44336'
+                st.markdown(f"""
+                    <div class='mover-row'>
+                      <img src='{m['Logo']}' width=30 />
+                      <span class='mover-name'>{m['name']}</span>
+                      <span style='margin-left:auto;color:{clr};font-weight:bold'>{p:+.2f}%</span>
+                    </div>
+                """, unsafe_allow_html=True)
+        st.markdown("---")
+        st.subheader("All Coins")
+        render_coins_table(df, currency)
+
+# ========================
+# DETAIL VIEW
+# ========================
+def display_details():
+    cid = st.session_state.selected_coin_id
+    sel = df[df['id']==cid]
+    if sel.empty:
+        st.warning("Coin not found.")
+        st.session_state.selected_coin_id = None
+        st.experimental_rerun()
+    coin = sel.iloc[0]
+    # top bar
+    cols = st.columns([0.1,1,0.2,0.2,0.2,0.2,0.2,0.5])
+    if coin['Logo']: cols[0].image(coin['Logo'],width=40)
+    cols[1].markdown(f"**<span style='font-size:1.5rem;'>{coin['name']}</span>** <span style='color:#AAA'>{coin['Symbol']}</span>", unsafe_allow_html=True)
+    # fetch intraday
+    ohlc1 = get_raw_ohlc_data(cid, currency, days=1)
+    latest = ohlc1.iloc[-1] if not ohlc1.empty else {}
+    pr = coin['current_price']; pc = coin['24h %']; pc_clr = "change-positive" if pc>=0 else "change-negative"
+    cols[2].markdown(f"<span class='chart-info-metric'>Price: <span class='chart-info-value'>{pr:,.4f} {currency.upper()}</span></span>", unsafe_allow_html=True)
+    cols[3].markdown(f"<span class='chart-info-metric'>24h %: <span class='chart-info-value {pc_clr}'>{pc:+.2f}%</span></span>", unsafe_allow_html=True)
+    for i,k in enumerate(['open','high','low','close'],start=4):
+        val = latest.get(k,0.0)
+        cols[i].markdown(f"<span class='chart-info-metric'>{k.upper()}: <span class='chart-info-value'>{val:,.4f}</span></span>", unsafe_allow_html=True)
+    st.markdown("---")
+    # back + controls
+    c_back, c_tf, c_ct = st.columns([0.5,3,1])
+    if c_back.button("⬅️ Back to Overview"):
+        st.session_state.selected_coin_id=None
+        st.experimental_rerun()
+    tf_opts = ['1m','5m','15m','30m','1h','4h','1D','7D','1M','3M','6M','1Y','MAX']
+    idx = tf_opts.index('1D')
+    sel_tf = c_tf.radio("Timeframe", tf_opts, index=idx, horizontal=True)
+    ctype = c_ct.selectbox("Chart Type", ["Candlestick","OHLC","Line"])
+    # prepare data
+    ohlc_df = pd.DataFrame()
+    if sel_tf in ['1m','5m','15m','30m','1h','4h','1D']:
+        raw = get_raw_ohlc_data(cid,currency,1)
+        if sel_tf=='1D' or sel_tf=='1m': ohlc_df=raw
+        else:
+            m = {'5m':'5min','15m':'15min','30m':'30min','1h':'1H','4h':'4H'}
+            ohlc_df = resample_ohlc(raw, m[sel_tf])
+    else:
+        days_map={'7D':7,'1M':30,'3M':90,'6M':180,'1Y':365,'MAX':365}
+        ohlc_df = get_raw_ohlc_data(cid,currency,days_map.get(sel_tf,30))
+    # plot
+    loaded=False
+    if ctype in ["Candlestick","OHLC"] and not ohlc_df.empty:
+        if ctype=="Candlestick":
+            fig = go.Figure(go.Candlestick(
+                x=ohlc_df['date'], open=ohlc_df['open'], high=ohlc_df['high'],
+                low=ohlc_df['low'], close=ohlc_df['close'],
+                increasing_line_color='#4CAF50', decreasing_line_color='#F44336'
+            ))
+        else:
+            fig = go.Figure(go.Ohlc(
+                x=ohlc_df['date'], open=ohlc_df['open'], high=ohlc_df['high'],
+                low=ohlc_df['low'], close=ohlc_df['close'],
+                increasing_line_color='#4CAF50', decreasing_line_color='#F44336'
+            ))
+        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                          font_color="#E0E0E0", hovermode="x unified",
+                          title=f"{coin['name']} {ctype} ({sel_tf})")
+        st.plotly_chart(fig, use_container_width=True); loaded=True
+    elif ctype=="Line":
+        # days param for history
+        dm = {'1m':1,'5m':1,'15m':1,'30m':1,'1h':1,'4h':1,'1D':1,'7D':7,'1M':30,'3M':90,'6M':180,'1Y':365,'MAX':365}
+        ld = get_historical_data(cid,currency,dm.get(sel_tf,30))
+        if not ld.empty:
+            fig = px.line(ld, 'date','price', title=f"{coin['name']} Price ({sel_tf})")
+            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                              font_color="#E0E0E0", hovermode="x unified")
+            st.plotly_chart(fig, use_container_width=True); loaded=True
+    if not loaded:
+        st.info("No chart data available for this selection.")
+    st.markdown("---")
+    # metrics
+    mc = coin['market_cap']; vol=coin['total_volume']
+    m1,m2=st.columns(2)
+    m1.metric("Market Cap", format_currency(mc, currency))
+    m2.metric("24h Volume", format_currency(vol, currency))
+    m1.metric("Rank", f"#{coin['market_cap_rank']}")
+
+# decide view
+if st.session_state.selected_coin_id:
+    display_details()
+else:
+    display_overview()
