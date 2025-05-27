@@ -298,8 +298,12 @@ def load_market_data(vs_currency: str):
 
 @st.cache_data(ttl=3600) # 1 hour
 def get_historical_data(coin_id: str, vs_currency: str, days: int = 30):
+    # CoinGecko 'days' parameter:
+    # 1/7/14/30/90/180/365/max
+    # For 'max', it should be the string 'max'
+    days_param = str(days) if days != 'max' else 'max' # Ensure 'max' is passed as string
     try:
-        chart = cg.get_coin_market_chart_by_id(id=coin_id, vs_currency=vs_currency, days=days)
+        chart = cg.get_coin_market_chart_by_id(id=coin_id, vs_currency=vs_currency, days=days_param)
         if not chart or 'prices' not in chart: return pd.DataFrame()
         df_hist = pd.DataFrame(chart['prices'], columns=['timestamp','price'])
         df_hist['date'] = pd.to_datetime(df_hist['timestamp'], unit='ms')
@@ -311,8 +315,13 @@ def get_historical_data(coin_id: str, vs_currency: str, days: int = 30):
 
 @st.cache_data(ttl=60)
 def get_raw_ohlc_data_from_coingecko(coin_id: str, vs_currency: str, days: int):
+    # CoinGecko OHLC 'days' parameter:
+    # 1/7/14/30/90/180/365/max (though 'max' might mean very large number of days, e.g. 4000)
+    # '1' means 30-min candles for past 24 hours for some coins, or 1-min for others.
+    # 'days=1' typically provides the highest granularity for the last 24h.
+    days_param = str(days)
     try:
-        data_ohlc = cg.get_coin_ohlc_by_id(id=coin_id, vs_currency=vs_currency, days=days)
+        data_ohlc = cg.get_coin_ohlc_by_id(id=coin_id, vs_currency=vs_currency, days=days_param)
         if not data_ohlc: return pd.DataFrame()
         df_ohlc = pd.DataFrame(data_ohlc, columns=['timestamp','open','high','low','close'])
         df_ohlc['date'] = pd.to_datetime(df_ohlc['timestamp'], unit='ms')
@@ -372,13 +381,13 @@ df = load_market_data(currency)
 # ========================
 # HELPER FUNCTIONS FOR DISPLAY
 # ========================
-def display_market_movers(df_mov, title, icon, pct_col_name):
+def display_market_movers(df_mov, title, icon, pct_col_name_display): # Renamed parameter for clarity
     st.markdown(f"<p class='mover-header'>{icon} {title}</p>", unsafe_allow_html=True)
-    if df_mov.empty or pct_col_name not in df_mov.columns:
+    if df_mov.empty or pct_col_name_display not in df_mov.columns:
         st.caption(f"No data available for {title.lower()}.")
         return
     for _,r_mov in df_mov.iterrows():
-        ch = r_mov.get(pct_col_name, 0.0); ch = ch if pd.notnull(ch) else 0.0
+        ch = r_mov.get(pct_col_name_display, 0.0); ch = ch if pd.notnull(ch) else 0.0
         clr = '#4CAF50' if ch>=0 else '#F44336'
         logo_url = r_mov.get('Logo', '')
         coin_name_mov = r_mov.get('name', 'N/A')
@@ -396,7 +405,6 @@ def render_coins_table(data_df_to_render, currency_symbol_for_table):
     if data_df_to_render.empty:
         return
 
-    # Adjusted column spec for Watchlist button
     header_cols_spec = [0.3, 2.0, 1.3, 0.7, 1.5, 1.2, 0.5] 
     header_cols = st.columns(header_cols_spec)
     headers = ["#", "Coin", f"Price ({currency_symbol_for_table.upper()})", "24h %", "Market Cap", "7d Sparkline", "❤️"]
@@ -417,38 +425,23 @@ def render_coins_table(data_df_to_render, currency_symbol_for_table):
         
         coin_label_render = f"{coin_name_tbl_render} ({coin_symbol_tbl_render})"
         logo_url_render = r_row_table.get('Logo', '')
-
-        # Coin Name (clickable)
-        # Using st.button for clickability and Python callback directly
-        button_container = row_cols[1].empty() # Create a container for the button
         
-        # To make the text look like a link, we use markdown within a container that hosts a button
-        # This is a common pattern: display rich text, make it clickable with an st.button
-        
-        # Define the clickable coin name display
         coin_display_html = f"""
         <div style='display:flex; align-items:center;' class='table-coin-name-clickable'>
             {f"<img src='{logo_url_render}' width='24' height='24' style='margin-right:8px; vertical-align:middle;'>" if logo_url_render else "<span style='width:32px; display:inline-block;'></span>"}
             <span class='table-coin-name'>{coin_label_render}</span>
         </div>
         """
+        # This markdown is for display only. The button below handles the click.
         row_cols[1].markdown(coin_display_html, unsafe_allow_html=True)
         
-        # Add an invisible button over it or a small clickable icon for navigation
-        # For simplicity, making the whole cell clickable for navigation using a transparent button
-        # This will overlay the markdown. A bit hacky.
-        # A better way is to have a specific "details" button or just rely on users knowing to click.
-        # Or, use a callback on the entire row if Streamlit evolves to support it easily.
-        # For now, let's make a small, explicit select button or rely on watchlist navigation.
-        # To avoid complexity of overlapping, we'll keep the original hidden button logic slightly modified.
-        
-        # Simplified: Use a transparent button for the action, markdown for display
-        if row_cols[1].button(" ", key=f"select_COIN_{coin_id_tbl_render}_{index}", help=f"View details for {coin_name_tbl_render}", use_container_width=True):
+        # Invisible button overlay for clickability
+        # To make this work well, the button must be in the same column and ideally sized.
+        # A simpler alternative is an explicit "Details" icon/button if this overlay is problematic across browsers/themes.
+        if row_cols[1].button(" ", key=f"select_COIN_{coin_id_tbl_render}_{index}_{time.time()}", help=f"View details for {coin_name_tbl_render}", use_container_width=True):
             st.session_state.selected_coin_id = coin_id_tbl_render  
             st.session_state.search_query = "" 
             st.rerun()
-        # The above button will be nearly invisible. The text is shown by markdown.
-
 
         current_price_val_row_render = r_row_table.get('current_price', 0.0); current_price_val_row_render = current_price_val_row_render if pd.notnull(current_price_val_row_render) else 0.0
         row_cols[2].markdown(f"<span class='table-price'>{current_price_val_row_render:,.4f}</span>", unsafe_allow_html=True)
@@ -466,17 +459,16 @@ def render_coins_table(data_df_to_render, currency_symbol_for_table):
         else:
             row_cols[5].caption("N/A")
 
-        # Watchlist Toggle Button
         is_in_watchlist = coin_id_tbl_render in st.session_state.watchlist
         button_symbol = "➖" if is_in_watchlist else "➕"
         button_help = "Remove from Watchlist" if is_in_watchlist else "Add to Watchlist"
         button_class = "remove" if is_in_watchlist else "add"
         
-        # Use a container for the button to apply specific class for styling
-        button_container = row_cols[6].empty() 
-        with button_container.container():
-            st.markdown(f"<div class='watchlist-button {button_class}'>", unsafe_allow_html=True) # Apply class to div
-            if st.button(button_symbol, key=f"watch_TABLE_{coin_id_tbl_render}_{index}", help=button_help):
+        button_container_col6 = row_cols[6].empty() 
+        with button_container_col6: # Changed from button_container.container()
+            # Using st.markdown to create a div wrapper for CSS class application around the button
+            st.markdown(f"<div class='watchlist-button {button_class}'>", unsafe_allow_html=True)
+            if st.button(button_symbol, key=f"watch_TABLE_{coin_id_tbl_render}_{index}_{time.time()}", help=button_help):
                 if is_in_watchlist:
                     st.session_state.watchlist.remove(coin_id_tbl_render)
                     st.toast(f"{coin_name_tbl_render} removed from watchlist!", icon="💔")
@@ -496,38 +488,50 @@ def display_watchlist_tab(main_df, currency_symbol):
     
     if not st.session_state.watchlist:
         st.markdown("<p class='watchlist-empty-message'>Your watchlist is empty. Add coins from the Market Overview or search results!</p>", unsafe_allow_html=True)
-        # Lottie animation for empty watchlist
-        empty_watch_anim = load_lottie("https://lottie.host/9c4a4279-3525-4749-942e-39a539476f32/HjYBA1z1U3.json") # Example: sad face or empty box
+        empty_watch_anim = load_lottie("https://lottie.host/9c4a4279-3525-4749-942e-39a539476f32/HjYBA1z1U3.json")
         if empty_watch_anim:
              st_lottie(empty_watch_anim, height=200, key="empty_watchlist_anim")
         return
 
+    # Ensure main_df is not empty before filtering
+    if main_df.empty:
+        st.warning("Market data is not available. Cannot display watchlist details.")
+        st.markdown("<p class='watchlist-empty-message'>Your watchlist contains the following coin IDs (details unavailable):</p>", unsafe_allow_html=True)
+        for coin_id in st.session_state.watchlist:
+            st.caption(f"- {coin_id}")
+        return
+
     watchlist_df = main_df[main_df['id'].isin(st.session_state.watchlist)]
 
-    if watchlist_df.empty: # Handles if watched coins are no longer in main_df (e.g. API changes, delisting)
+    if watchlist_df.empty and st.session_state.watchlist: 
         st.markdown("<p class='watchlist-empty-message'>Could not load data for your watched coins. They might be delisted or data is temporarily unavailable.</p>", unsafe_allow_html=True)
-        st.caption("The following coin IDs were in your watchlist but not found:")
+        st.caption("The following coin IDs were in your watchlist but not found in current market data:")
         for coin_id_missing in st.session_state.watchlist:
-            if coin_id_missing not in main_df['id'].tolist():
+            if main_df.empty or coin_id_missing not in main_df['id'].tolist(): # Check against main_df if it's not empty
                  st.caption(f"- {coin_id_missing}")
         return
+    elif watchlist_df.empty: # Should be caught by the first if, if st.session_state.watchlist is also empty
+         st.markdown("<p class='watchlist-empty-message'>Your watchlist is empty.</p>", unsafe_allow_html=True)
+         return
     
     render_coins_table(watchlist_df, currency_symbol)
-
 
 # ========================
 # DETAIL VIEW
 # ========================
 def display_coin_details():
     selected_id = st.session_state.selected_coin_id
-    if selected_id is None or 'id' not in df.columns:
+    if selected_id is None or (not df.empty and 'id' not in df.columns): # Check df.empty too
         st.warning("Coin data or selection is invalid. Returning to overview.")
         st.session_state.selected_coin_id = None; st.rerun()
         return
 
-    sel = df[df['id'] == selected_id]
+    sel = pd.DataFrame() # Initialize sel
+    if not df.empty:
+        sel = df[df['id'] == selected_id]
+    
     if sel.empty:
-        st.warning(f"Selected coin (ID: {selected_id}) not found. Returning to overview.")
+        st.warning(f"Selected coin (ID: {selected_id}) not found. Data might be reloading or coin is not in current dataset. Returning to overview.")
         st.session_state.selected_coin_id = None; st.rerun()
         return  
         
@@ -537,19 +541,17 @@ def display_coin_details():
     coin_id_detail = coin.get('id', 'unknown')
     coin_logo_detail = coin.get('Logo', '')
 
-    # Top bar: Logo, Name, Symbol, Watchlist Button, Back Button
-    top_bar_cols = st.columns([0.08, 0.5, 0.2, 0.22]) # Adjust ratios as needed
+    top_bar_cols = st.columns([0.08, 0.5, 0.2, 0.22]) 
     with top_bar_cols[0]:
         if coin_logo_detail: st.image(coin_logo_detail, width=50)
     with top_bar_cols[1]:
         st.markdown(f"<span class='detail-coin-name'>{coin_name_detail}</span> <span class='detail-coin-symbol'>{coin_symbol_detail.upper()}</span>", unsafe_allow_html=True)
     
-    with top_bar_cols[2]: # Watchlist button
+    with top_bar_cols[2]: 
         is_in_watchlist_detail = coin_id_detail in st.session_state.watchlist
         watch_button_text = "💔 Remove" if is_in_watchlist_detail else "💖 Add to Watchlist"
-        watch_button_key = f"watch_DETAIL_{coin_id_detail}"
-        # Apply a specific class for this button if different styling is needed
-        st.markdown("<div class='stButton watchlist-detail-button'>", unsafe_allow_html=True) # Wrapper for specific CSS
+        watch_button_key = f"watch_DETAIL_{coin_id_detail}_{time.time()}"
+        st.markdown("<div class='stButton watchlist-detail-button'>", unsafe_allow_html=True) 
         if st.button(watch_button_text, key=watch_button_key, help="Toggle Watchlist Status"):
             if is_in_watchlist_detail:
                 st.session_state.watchlist.remove(coin_id_detail)
@@ -557,20 +559,17 @@ def display_coin_details():
             else:
                 st.session_state.watchlist.append(coin_id_detail)
                 st.toast(f"{coin_name_detail} added to watchlist!", icon="💖")
-            # No rerun here, allow current view to update if button text changes, or rerun if state needs wide refresh
-            st.experimental_rerun() # Rerun to update button text and potentially other dependent states
+            st.rerun() # Rerun to update button text
         st.markdown("</div>", unsafe_allow_html=True)
 
-
-    with top_bar_cols[3]: # Back button
-        if st.button("⬅️ Back to Overview", key=f"back_button_{coin_id_detail}"):  
+    with top_bar_cols[3]: 
+        if st.button("⬅️ Back to Overview", key=f"back_button_{coin_id_detail}_{time.time()}"):  
             st.session_state.selected_coin_id=None
             st.session_state.search_query = ""
             st.rerun()
     st.markdown("---")
 
-    # Price Metrics Bar (below Name/Symbol)
-    metric_cols = st.columns([1,1,0.5,0.5,0.5,0.5]) # Price, 24h%, O, H, L, C
+    metric_cols = st.columns([1,1,0.5,0.5,0.5,0.5]) 
     ohlc_for_metrics = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=1)  
     latest_price_info = ohlc_for_metrics.iloc[-1] if not ohlc_for_metrics.empty else {}
     
@@ -588,11 +587,10 @@ def display_coin_details():
         metric_cols[5].markdown(f"<span class='chart-info-metric'>C: <span class='chart-info-value'>{latest_price_info.get('close',0.0):,.4f}</span></span>", unsafe_allow_html=True)
     st.markdown("---") 
 
-    # Chart Controls (Timeframe and Type)
     chart_controls_cols = st.columns([3, 1]) 
     with chart_controls_cols[0]:
         timeframe_options = ['1m', '5m', '10m', '15m', '30m', '1h', '4h', '1D', '7D', '1M', '3M', '6M', '1Y', 'MAX']
-        default_timeframe_index = timeframe_options.index('1D') if '1D' in timeframe_options else 7 # fallback if '1D' removed
+        default_timeframe_index = timeframe_options.index('1D') if '1D' in timeframe_options else 7 
         selected_timeframe = st.radio(
             "Select Timeframe:", options=timeframe_options, index=default_timeframe_index,
             horizontal=True, key=f"chart_timeframe_{coin_id_detail}"
@@ -600,40 +598,37 @@ def display_coin_details():
     with chart_controls_cols[1]:
         chart_type = st.selectbox("Chart Type:", ["Candlestick","Line","OHLC"], index=0, key=f"chart_type_{coin_id_detail}")
 
-    # Chart rendering logic (remains largely the same as provided, with style updates)
     fig_data_loaded = False
     ohlc_data_for_chart = pd.DataFrame()
     line_data_for_chart = pd.DataFrame()
 
     coingecko_days_map_ohlc = {
-        '1D': 1, '7D': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'MAX': 'max' # use string 'max' for historical
+        '1D': 1, '7D': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'MAX': 365*2 # Capped MAX for OHLC
     }
-    # For historical line chart, if MAX is chosen, Coingecko API accepts 'max'
-    coingecko_days_map_hist = {**coingecko_days_map_ohlc, 'MAX': 'max'}
-
+    coingecko_days_map_hist = {
+        '1D': 1, '7D': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'MAX': 'max'
+    }
 
     if selected_timeframe in ['1m', '5m', '10m', '15m', '30m', '1h', '4h', '1D']:
-        raw_1min_ohlc = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=1) # 'days=1' gives minute data
+        raw_1min_ohlc = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=1) 
         if not raw_1min_ohlc.empty:
-            if selected_timeframe == '1m' or selected_timeframe == '1D': # 1D on chart means 1-min candles for 24h
+            if selected_timeframe == '1m' or selected_timeframe == '1D': 
                 ohlc_data_for_chart = raw_1min_ohlc
             else: 
-                interval_map_pandas = {'5m': '5T', '10m': '10T', '15m': '15T', '30m': '30T', '1h': '1H', '4h': '4H'} # T for minutes
+                interval_map_pandas = {'5m': '5T', '10m': '10T', '15m': '15T', '30m': '30T', '1h': '1H', '4h': '4H'} 
                 resampling_interval = interval_map_pandas.get(selected_timeframe)
                 if resampling_interval:
                     ohlc_data_for_chart = resample_ohlc_data(raw_1min_ohlc, resampling_interval)
-        # If ohlc_data_for_chart is still empty, appropriate message will be shown later
             
     elif selected_timeframe in ['7D', '1M', '3M', '6M', '1Y', 'MAX']:
-        days_param_ohlc = coingecko_days_map_ohlc.get(selected_timeframe)
-        if days_param_ohlc: # 'max' is not for OHLC endpoint in this way
-             ohlc_data_for_chart = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=days_param_ohlc if days_param_ohlc != 'max' else 365*2) # Cap 'max' for OHLC to avoid too much data
+        days_param_ohlc_val = coingecko_days_map_ohlc.get(selected_timeframe)
+        if days_param_ohlc_val: 
+             ohlc_data_for_chart = get_raw_ohlc_data_from_coingecko(coin_id_detail, currency, days=days_param_ohlc_val)
     
-    # Plotting
     chart_title_text = f"{coin_name_detail} - {chart_type} ({selected_timeframe} Intervals)"
     common_layout_updates = dict(
         title={'text': chart_title_text, 'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#FFFFFF', 'size': 16}},
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(20,20,25,0.5)', # Slightly visible plot background
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(20,20,25,0.5)', 
         font_color="#E0E0E0",
         xaxis=dict(showgrid=True, color="#B0BEC5", linecolor="#444", gridcolor='rgba(128,128,128,0.2)'),
         yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color="#B0BEC5", linecolor="#444", side='right'),
@@ -657,16 +652,16 @@ def display_coin_details():
         else:
             st.info(f"No OHLC data for {chart_type} chart for {coin_name_detail} at '{selected_timeframe}' interval.")
     elif chart_type == "Line":
-        hist_days_param = coingecko_days_map_hist.get(selected_timeframe, 1 if selected_timeframe not in ['1m','5m','10m','15m','30m','1h','4h'] else 1)
-        if selected_timeframe in ['1m','5m','10m','15m','30m','1h','4h']: # For these, use 1-day data for finer granularity
-            hist_days_param = 1
+        hist_days_param_val = 1 # Default for finer intraday line charts
+        if selected_timeframe in coingecko_days_map_hist: # For longer terms, use mapped values
+            hist_days_param_val = coingecko_days_map_hist[selected_timeframe]
         
-        line_data_for_chart = get_historical_data(coin_id_detail, currency, days=hist_days_param)
+        line_data_for_chart = get_historical_data(coin_id_detail, currency, days=hist_days_param_val)
         
         if not line_data_for_chart.empty and 'price' in line_data_for_chart.columns and not line_data_for_chart['price'].isna().all():
             fig = px.line(line_data_for_chart, x='date', y='price',
                           labels={'price':f'Price ({currency.upper()})','date':'Date'})
-            fig.update_traces(line=dict(color='#2196F3', width=2)) # Blue line color
+            fig.update_traces(line=dict(color='#2196F3', width=2)) 
             fig.update_layout(**common_layout_updates)
             st.plotly_chart(fig, use_container_width=True)
             fig_data_loaded = True
@@ -678,14 +673,13 @@ def display_coin_details():
 
     st.markdown("---")
     st.subheader("Info & Metrics")
-    c1_detail, c2_detail, c3_detail = st.columns(3) # Added one more column for Rank
+    c1_detail, c2_detail, c3_detail = st.columns(3) 
     market_cap_val = coin.get('market_cap', 0); market_cap_val = market_cap_val if pd.notnull(market_cap_val) else 0
     total_volume_val = coin.get('total_volume', 0); total_volume_val = total_volume_val if pd.notnull(total_volume_val) else 0
     
     c1_detail.metric("Market Cap", f"${market_cap_val:,}" if currency.lower() == 'usd' else f"{market_cap_val:,} {currency.upper()}")
     c2_detail.metric("24h Volume", f"${total_volume_val:,}" if currency.lower() == 'usd' else f"{total_volume_val:,} {currency.upper()}")
     c3_detail.metric("Market Cap Rank", f"#{coin.get('market_cap_rank', 'N/A')}")
-
 
 # ========================
 # MARKET OVERVIEW (Main Display Logic with Search)
@@ -700,7 +694,7 @@ def display_market_overview():
 
     if search_query_input != st.session_state.get("search_query", ""):
         st.session_state.search_query = search_query_input
-        st.rerun() # Rerun to reflect search results immediately
+        st.rerun() 
 
     search_active = bool(st.session_state.get("search_query", "").strip())
 
@@ -737,10 +731,10 @@ def display_market_overview():
         else:
             st.caption(f"Found **{len(search_results_df)}** matching coin(s).")
             render_coins_table(search_results_df, currency)  
-    else: # Default view (no active search)
+    else: 
         st.subheader("Key Metrics")
-        b_col, e_col, t_col = st.columns(3) # Using 3 for key metrics (BTC, ETH, Total Market Cap if available)
-        if 'Symbol' in df.columns and not df.empty:
+        b_col, e_col, t_col = st.columns(3) 
+        if not df.empty and 'Symbol' in df.columns:
             btc_df = df[df['Symbol']=='BTC']
             if not btc_df.empty:
                 btc = btc_df.iloc[0]
@@ -757,36 +751,45 @@ def display_market_overview():
                 e_col.metric(f"ETH Price ({currency.upper()})", f"{eth_price:,.2f}", f"{eth_change:.2f}%")
             else: e_col.metric(f"ETH Price", "N/A", "N/A")
 
-            # Example: Total Market Cap metric (if available or meaningful from top coins)
             if 'market_cap' in df.columns and df['market_cap'].sum() > 0 :
                  total_mkt_cap_sum = df['market_cap'].sum()
                  t_col.metric(f"Total Mkt Cap (Top 250, {currency.upper()})", f"${total_mkt_cap_sum:,.0f}" if currency.lower()=='usd' else f"{total_mkt_cap_sum:,.0f}")
             else:
                  t_col.metric("Total Mkt Cap", "N/A")
+        else:
+            b_col.metric(f"BTC Price", "Loading...", "")
+            e_col.metric(f"ETH Price", "Loading...", "")
+            t_col.metric("Total Mkt Cap", "Loading...")
+
 
         st.markdown("---")
         gainer_col, loser_col = st.columns(2)
-        if not df.empty and timeframe + ' %' in df.columns: # Make sure the column for sorting exists
-            pct_change_col = timeframe + ' %'
+        if not df.empty and timeframe + ' %' in df.columns: 
+            pct_change_col = timeframe + ' %' # This is the correct variable name
             df_sorted_gainers = df.sort_values(by=pct_change_col, ascending=False).head(5)
-            df_sorted_losers = df.sort_values(by=pct_col_name, ascending=True).head(5) if pct_col_name in df.columns else pd.DataFrame()
+            
+            # **** CORRECTED LINE ****
+            df_sorted_losers = df.sort_values(by=pct_change_col, ascending=True).head(5) if pct_change_col in df.columns else pd.DataFrame()
 
             with gainer_col:
                 display_market_movers(df_sorted_gainers, f"Top Gainers ({timeframe})", "🚀", pct_change_col)
             with loser_col:
                 display_market_movers(df_sorted_losers, f"Top Losers ({timeframe})", "📉", pct_change_col)
         else:
-            st.info(f"Market mover data for timeframe '{timeframe}' is not available.")
+            st.info(f"Market mover data for timeframe '{timeframe}' is loading or not available.")
             
         st.markdown("---")
         st.subheader("All Coins (Top 250 by Market Cap)")
-        render_coins_table(df.head(100), currency) # Displaying top 100 by default, or all of 'df'
+        if not df.empty:
+            render_coins_table(df.head(100), currency) 
+        else:
+            st.info("Market data is loading... Please wait.")
+
 
 # ========================
 # MAIN APP LAYOUT (Using Tabs)
 # ========================
 
-# Auto-refresh logic
 if time.time() - st.session_state.last_refresh > refresh_interval:
     st.session_state.last_refresh = time.time()
     st.rerun()
@@ -795,7 +798,6 @@ if time.time() - st.session_state.last_refresh > refresh_interval:
 if st.session_state.selected_coin_id:
     display_coin_details() 
 else:
-    # Dynamic tab title for watchlist
     watchlist_count = len(st.session_state.watchlist)
     tab_titles = ["📊 Market Overview", f"⭐ Watchlist ({watchlist_count})"]
     
@@ -804,19 +806,8 @@ else:
     with tab1:
         display_market_overview()
     with tab2:
-        if df.empty and watchlist_count > 0: # If df is empty but watchlist has items
-            st.warning("Market data is currently unavailable. Cannot display full watchlist details. Please try refreshing.")
-            st.markdown("<p class='section-subheader'>⭐ My Watched Coin IDs</p>", unsafe_allow_html=True)
-            if not st.session_state.watchlist:
-                 st.markdown("<p class='watchlist-empty-message'>Your watchlist is empty.</p>", unsafe_allow_html=True)
-            else:
-                for coin_id in st.session_state.watchlist:
-                    st.markdown(f"- {coin_id} (Details unavailable without market data)")
-        elif df.empty and watchlist_count == 0:
-            display_watchlist_tab(df, currency) # Will show empty message
-        else: # df is available
-            display_watchlist_tab(df, currency)
+        display_watchlist_tab(df, currency)
 
 st.sidebar.markdown("---")
-st.sidebar.caption(f"Last refresh: {time.strftime('%H:%M:%S')}")
+st.sidebar.caption(f"Last refresh: {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_refresh))}")
 st.sidebar.caption(f"Data from CoinGecko API.")
