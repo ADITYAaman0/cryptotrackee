@@ -372,4 +372,4 @@ def render_coins_table(data_df_to_render, currency_symbol_for_table):
         row_cols[3].markdown(f"<div style='color:{clr}; font-weight:bold; text-align:left;'>{change_24h:+.2f}%</div>", unsafe_allow_html=True)
         
         market_cap = r_row_table.get('market_cap', 0)
-        row_cols[4].write(f"${market_cap:,}" if currency.lower() == 'usd'
+        row_cols[4].write(f"${market_cap:,}" if currency.lower() == 'usd')
