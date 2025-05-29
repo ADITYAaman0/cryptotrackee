@@ -8,3 +8,9 @@ requests
 streamlit-autorefresh
 streamlit-lottie
 kaleido
+Flask==2.3.2
+Flask-Cors==3.0.11
+Flask-Caching==2.0.2
+pycoingecko==4.1.0
+gunicorn==20.1.0
+
