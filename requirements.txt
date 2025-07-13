@@ -13,4 +13,9 @@ Flask-Cors==3.0.11
 Flask-Caching==2.0.2
 pycoingecko==4.1.0
 gunicorn==20.1.0
+ta
+numpy
+streamlit-option-menu
+streamlit-aggrid
+jsonpickle
 
